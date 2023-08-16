@@ -10,3 +10,8 @@ func (arena *Arena) getNode(nodeOffset uint32) *node {
 	/*TODO:通过偏移量来找到目标节点*/
 	return &node{}
 }
+
+func (arena *Arena) putVal(v ValueStruct) uint32 {
+
+	return 0
+}

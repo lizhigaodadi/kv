@@ -459,6 +459,7 @@ func (s *SkipList) Add(e *Entry) {
 		before, next := s.findSpliceForLevel(key, prev[i+1], i)
 
 		if before == next { /*直接对节点的值进行替换*/
+			vo := s.arena.putVal(v)
 
 		}
 	}
