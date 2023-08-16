@@ -16,9 +16,11 @@ package utils
 
 import (
 	"fmt"
+	"github.com/stretchr/testify/require"
 	r "math/rand"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -84,85 +86,85 @@ func TestDrawList(t *testing.T) {
 	list.Draw(false)
 }
 
-//func TestConcurrentBasic(t *testing.T) {
-//	const n = 1000
-//	l := NewSkipList(100000000)
-//	var wg sync.WaitGroup
-//	key := func(i int) []byte {
-//		return []byte(fmt.Sprintf("Keykeykey%05d", i))
-//	}
-//	for i := 0; i < n; i++ {
-//		wg.Add(1)
-//		go func(i int) {
-//			defer wg.Done()
-//			l.Add(NewEntry(key(i), key(i)))
-//		}(i)
-//	}
-//	wg.Wait()
-//
-//	// Check values. Concurrent reads.
-//	for i := 0; i < n; i++ {
-//		wg.Add(1)
-//		go func(i int) {
-//			defer wg.Done()
-//			v := l.Search(key(i))
-//			require.EqualValues(t, key(i), v.Value)
-//			return
-//
-//			require.Nil(t, v)
-//		}(i)
-//	}
-//	wg.Wait()
-//}
-//
-//func Benchmark_ConcurrentBasic(b *testing.B) {
-//	const n = 1000
-//	l := NewSkipList(100000000)
-//	var wg sync.WaitGroup
-//	key := func(i int) []byte {
-//		return []byte(fmt.Sprintf("keykeykey%05d", i))
-//	}
-//	for i := 0; i < n; i++ {
-//		wg.Add(1)
-//		go func(i int) {
-//			defer wg.Done()
-//			l.Add(NewEntry(key(i), key(i)))
-//		}(i)
-//	}
-//	wg.Wait()
-//
-//	// Check values. Concurrent reads.
-//	for i := 0; i < n; i++ {
-//		wg.Add(1)
-//		go func(i int) {
-//			defer wg.Done()
-//			v := l.Search(key(i))
-//			require.EqualValues(b, key(i), v.Value)
-//			require.NotNil(b, v)
-//		}(i)
-//	}
-//	wg.Wait()
-//}
-//
-//func TestSkipListIterator(t *testing.T) {
-//	list := NewSkipList(100000)
-//
-//	//Put & Get
-//	entry1 := NewEntry([]byte(RandString(10)), []byte(RandString(10)))
-//	list.Add(entry1)
-//	assert.Equal(t, entry1.Value, list.Search(entry1.Key).Value)
-//
-//	entry2 := NewEntry([]byte(RandString(10)), []byte(RandString(10)))
-//	list.Add(entry2)
-//	assert.Equal(t, entry2.Value, list.Search(entry2.Key).Value)
-//
-//	//Update a entry
-//	entry2_new := NewEntry([]byte(RandString(10)), []byte(RandString(10)))
-//	list.Add(entry2_new)
-//	assert.Equal(t, entry2_new.Value, list.Search(entry2_new.Key).Value)
-//
-//	iter := list.NewSkipListIterator()
-//	for iter.Rewind(); iter.Valid(); iter.Next() {
-//		fmt.Printf("iter key %s, value %s", iter.Item().Entry().Key, iter.Item().Entry().Value)
-//	}
-//}
+func TestConcurrentBasic(t *testing.T) {
+	const n = 1000
+	l := NewSkipList(100000000)
+	var wg sync.WaitGroup
+	key := func(i int) []byte {
+		return []byte(fmt.Sprintf("Keykeykey%05d", i))
+	}
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			l.Add(NewEntry(key(i), key(i)))
+		}(i)
+	}
+	wg.Wait()
+
+	// Check values. Concurrent reads.
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			v := l.Search(key(i))
+			require.EqualValues(t, key(i), v.Value)
+			return
+
+			require.Nil(t, v)
+		}(i)
+	}
+	wg.Wait()
+}
+
+func Benchmark_ConcurrentBasic(b *testing.B) {
+	const n = 1000
+	l := NewSkipList(100000000)
+	var wg sync.WaitGroup
+	key := func(i int) []byte {
+		return []byte(fmt.Sprintf("keykeykey%05d", i))
+	}
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			l.Add(NewEntry(key(i), key(i)))
+		}(i)
+	}
+	wg.Wait()
+
+	// Check values. Concurrent reads.
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			v := l.Search(key(i))
+			require.EqualValues(b, key(i), v.Value)
+			require.NotNil(b, v)
+		}(i)
+	}
+	wg.Wait()
+}
+
+func TestSkipListIterator(t *testing.T) {
+	list := NewSkipList(100000)
+
+	//Put & Get
+	entry1 := NewEntry([]byte(RandString(10)), []byte(RandString(10)))
+	list.Add(entry1)
+	assert.Equal(t, entry1.Value, list.Search(entry1.Key).Value)
+
+	entry2 := NewEntry([]byte(RandString(10)), []byte(RandString(10)))
+	list.Add(entry2)
+	assert.Equal(t, entry2.Value, list.Search(entry2.Key).Value)
+
+	//Update a entry
+	entry2_new := NewEntry([]byte(RandString(10)), []byte(RandString(10)))
+	list.Add(entry2_new)
+	assert.Equal(t, entry2_new.Value, list.Search(entry2_new.Key).Value)
+
+	iter := list.newSkipListIterator()
+	for iter.Rewind(); iter.Valid(); iter.Next() {
+		fmt.Printf("iter key %s, value %s", iter.Item().Key, iter.Item().Value)
+	}
+}
