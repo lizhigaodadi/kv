@@ -4,6 +4,7 @@ import (
 	"github.com/pkg/errors"
 	"log"
 	"sync/atomic"
+	"unsafe"
 )
 
 const (
@@ -24,6 +25,7 @@ func newArena(bufSize uint32) *Arena {
 	}
 }
 
+/*返回我们内存分配的起始偏移量*/
 func (a *Arena) allocate(sz uint32) uint32 {
 	/*更新一下分配的内存*/
 	offset := atomic.AddUint32(&a.n, sz)
@@ -45,6 +47,13 @@ func (a *Arena) allocate(sz uint32) uint32 {
 
 		a.buf = newBuf
 	}
+
+	return offset - sz
+}
+
+func (a *Arena) putNode() uint32 {
+	nodeSize := uint32(unsafe.Sizeof(node{}))
+	return a.allocate(nodeSize)
 }
 
 func (arena *Arena) getNode(nodeOffset uint32) *node {
