@@ -1,11 +1,9 @@
 package utils
 
 import (
-	"bytes"
 	"fmt"
 	"math/rand"
 	"strings"
-	"sync"
 	"sync/atomic"
 )
 
@@ -15,50 +13,94 @@ const (
 )
 
 type SkipList struct {
-	height     int
+	height     int32
 	headOffset uint32 /*head node position*/
 	ref        int32  /*被引用次数*/
 	arena      *Arena
 	OnClose    func()
 }
 
-func (s *SkipList) getNext(n *node, level int) *node {
-	/*TODO: 通过内存偏移来找到相应的节点*/
-	return &node{}
+func (s *SkipList) IncrRef() {
+	atomic.AddInt32(&s.ref, 1)
 }
 
-func (list *SkipList) newSkipListIterator() *SkipListIterator {
-	return &SkipListIterator{
-		indepre:  0,
-		curEntry: list.getHeader(),
-		SkipList: list,
+func (s *SkipList) DecrRef() {
+	atomic.AddInt32(&s.ref, -1)
+}
+
+func (s *SkipList) newSkipListIterator() *SkipListIterator {
+	s.IncrRef()
+	it := &SkipListIterator{
+		SkipList: s,
 	}
+
+	it.Rewind()
+
+	return it
 }
 
 type SkipListIterator struct {
-	indepre  int //当前的位置
-	curEntry *Entry
+	curNode  *node
 	SkipList *SkipList /*迭代器关于的对象*/
 }
 
+func (it *SkipListIterator) Key() []byte { /*获取迭代器当前节点的Key*/
+	AssertTrue(it.Valid())
+	return it.curNode.getKey(it.SkipList.arena)
+}
+
+func (it *SkipListIterator) Value() ValueStruct { /*取出值并复制给ValueStruct*/
+	/*获取value*/
+	valOffset, valSize := decodeValue(it.curNode.value)
+
+	return it.SkipList.arena.getVal(valOffset, valSize)
+}
+
+func (it *SkipListIterator) Seek(key []byte) {
+	AssertTrue(it.Valid())
+	it.curNode, _ = it.SkipList.findNear(key, false, true)
+}
+
 func (it *SkipListIterator) Valid() bool {
-	if it.curEntry == nil {
+	if it.curNode != nil { /*判断下一个的节点是否为空*/
 		return true
 	} else {
 		return false
 	}
 }
 
+/*重新指向第一个节点*/
 func (it *SkipListIterator) Rewind() {
-	it.curEntry = it.SkipList.getHeader().level[0] /*第二个节点的第一层次才是开始节点*/
-	it.indepre = 0
+	it.SeekToFirst()
 }
-func (it *SkipListIterator) next() {
-	it.curEntry = it.curEntry.level[0]
-	it.indepre++
+
+func (it *SkipListIterator) SeekToFirst() {
+	it.curNode = it.SkipList.getNext(it.SkipList.getHead(), 0)
+}
+
+func (it *SkipListIterator) Prev() {
+	AssertTrue(it.Valid())
+
+	it.curNode, _ = it.SkipList.findNear(it.Key(), true, false)
+}
+
+func (it *SkipListIterator) SeekForPrev(key []byte) { /*尽量往前移动*/
+	AssertTrue(it.Valid())
+
+	it.curNode, _ = it.SkipList.findNear(key, true, true)
+}
+
+func (it *SkipListIterator) Next() {
+	AssertTrue(it.Valid())
+	it.SkipList.getNext(it.curNode, 0)
 }
 func (it *SkipListIterator) Item() *Entry {
-	return it.curEntry
+	return &Entry{
+		Key:      it.Key(),
+		Value:    it.Value().Value,
+		ExpireAt: it.Value().ExpiresAt,
+		Version:  it.Value().Version,
+	}
 }
 
 func NewEntry(Key []byte, Value []byte) *Entry {
@@ -68,11 +110,7 @@ func NewEntry(Key []byte, Value []byte) *Entry {
 	}
 }
 func NewSkipList(test_num int) *SkipList {
-
-	list := &SkipList{}
-	list.header = newHeader()
-	list.height = maxLevel
-	list.rwMutepre = sync.RWMutepre{}
+	s := &SkipList{}
 
 	return list
 }
@@ -95,8 +133,8 @@ func (list *SkipList) calcScore(Key []byte) (score float64) {
 	return
 }
 
-func (s *SkipList) getHeight() int {
-	return s.height
+func (s *SkipList) getHeight() int32 {
+	return atomic.LoadInt32(&s.height)
 }
 
 func (s *SkipList) getHead() *node {
@@ -104,19 +142,19 @@ func (s *SkipList) getHead() *node {
 }
 
 /*展示出整个skip_list的结构*/
-func (list *SkipList) Draw(align bool) {
-	reverseTree := make([][]string, list.getHeight())
+func (s *SkipList) Draw(align bool) {
+	reverseTree := make([][]string, s.getHeight())
 
-	for level := list.getHeight() - 1; level >= 0; level-- {
+	for level := int(s.getHeight()) - 1; level >= 0; level-- {
 		/*遍历整个表*/
 		var nodeStr string
-		next := list.header.level[level]
+		next := s.getNext(s.getHead(), level)
 		for next != nil {
-			nodeStr = fmt.Sprintf("%s(%s)", next.Key, next.Value)
+			nodeStr = fmt.Sprintf("%s(%s)", next.getKey(s.arena), s.arena.getVal(next.getValueOffset()))
 
 			reverseTree[level] = append(reverseTree[level], nodeStr)
 
-			next = next.level[level]
+			next = s.getNext(next, level)
 		}
 	}
 
@@ -124,7 +162,7 @@ func (list *SkipList) Draw(align bool) {
 
 	if align {
 		/*需要额外判断是否有着间隔*/
-		for level := list.getHeight() - 1; level >= 0; level-- {
+		for level := s.getHeight() - 1; level >= 0; level-- {
 			pos := 0
 			for _, ele := range reverseTree[0] {
 				if pos == len(reverseTree[level]) {
@@ -142,7 +180,7 @@ func (list *SkipList) Draw(align bool) {
 
 	}
 	/*直接展示即可*/
-	for level := list.getHeight() - 1; level >= 0; level-- {
+	for level := s.getHeight() - 1; level >= 0; level-- {
 		pos := 0
 		for _, ele := range reverseTree[level] {
 			if pos == len(reverseTree[level])-1 {
@@ -159,102 +197,24 @@ func (list *SkipList) Draw(align bool) {
 
 }
 
-/*计算两个分数大小*/
-func compare(score float64, Key []byte, entry *Entry) int {
-	if score == entry.score {
-		return bytes.Compare(Key, entry.Key)
+func (s *SkipList) Search(key []byte) ValueStruct {
+	node, _ := s.findNear(key, false, true)
+
+	if node == nil {
+		return ValueStruct{}
 	}
 
-	if score < entry.score {
-		return -1
-	} else {
-		return 1
+	/*对比二者是否相等*/
+	k := node.getKey(s.arena)
+
+	if !SameKey(key, k) {
+		return ValueStruct{}
 	}
-}
+	/*发现相等了*/
+	valOffset, valSize := node.getValueOffset()
+	vs := s.arena.getVal(valOffset, valSize)
+	return vs
 
-func (list *SkipList) Search(Key []byte) ValueStruct {
-	/*获取Key的score*/
-	score := list.calcScore(Key)
-
-	i := list.height - 1
-	var preElement *Entry
-	preElement = list.header
-	//if preElement == nil {
-	//	return ValueStruct{}
-	//}
-	list.rwMutepre.RLock()
-
-	for i >= 0 {
-		for next := preElement.level[i]; next != nil; next = preElement.level[i] {
-			if c := compare(score, Key, next); c <= 0 {
-				if c == 0 { /*找到了*/
-					list.rwMutepre.RUnlock()
-					return ValueStruct{
-						Value: next.Value,
-					}
-				}
-				/*比这个小进入下一层或结束*/
-				break
-			}
-
-			/*更新*/
-			preElement = next
-		}
-		i--
-	}
-	list.rwMutepre.RUnlock()
-
-	return ValueStruct{0, nil}
-}
-
-func (list *SkipList) Add(entry *Entry) error {
-	score := list.calcScore(entry.Key)
-	entry.score = score
-
-	var prevElementHeaders [maxLevel]*Entry
-	var prevElement *Entry
-
-	/*找到正确的位置并将其加入进去*/
-	i := list.height - 1
-	prevElement = list.header
-	list.rwMutepre.Lock()
-	for i >= 0 {
-		prevElementHeaders[i] = prevElement /*记录在该层次访问的前一个元素*/
-		/*检测是否大于该数值*/
-		for next := prevElement.level[i]; next != nil; next = prevElement.level[i] {
-			if c := compare(score, entry.Key, next); c <= 0 {
-				if c == 0 {
-					/*直接替换值即可*/
-					next.Value = entry.Value
-					list.rwMutepre.Unlock()
-
-					return nil
-				}
-				/*进入下一轮轮回或者跳出*/
-
-				break
-			}
-			/*继续下一个*/
-			prevElement = next
-			prevElementHeaders[i] = prevElement /*记录在该层次访问的前一个元素*/
-		}
-		i--
-
-	}
-
-	/*在当前位置进行插入*/
-	level := RandLevel()
-	entry.level = make([]*Entry, level)
-
-	//开始在所有层次进行插入操作
-	for i := 0; i < level; i++ {
-		entry.level[i] = prevElementHeaders[i].level[i]
-		prevElementHeaders[i].level[i] = entry
-	}
-
-	list.rwMutepre.Unlock()
-
-	return nil
 }
 
 func newHeader() *Entry {
@@ -456,11 +416,113 @@ func (s *SkipList) Add(e *Entry) {
 	prev[maxLevel] = s.headOffset
 
 	for i := int(listHeight) - 1; i >= 0; i-- {
-		before, next := s.findSpliceForLevel(key, prev[i+1], i)
+		prev[i], next[i] = s.findSpliceForLevel(key, prev[i+1], i)
 
-		if before == next { /*直接对节点的值进行替换*/
-			vo := s.arena.putVal(v)
-
+		if prev[i] == next[i] { /*直接对节点的值进行替换*/
+			vo := s.arena.putVal(v) /*存储并获取value的偏移量*/
+			encValue := encodeValue(vo, v.EncodeSize())
+			prevNode := s.arena.getNode(prev[i])
+			prevNode.setValue(s.arena, encValue)
+			return
 		}
+	}
+
+	/*获取到一个随机的层级*/
+	height := RandLevel()
+
+	x := newNode(s.arena, v, height) /*新节点*/
+	listHeight = s.getHeight()
+
+	for height > int(listHeight) { /*如果height大于listHeight，我们就需要重新赋值*/
+		if atomic.CompareAndSwapInt32(&s.height, listHeight, int32(height)) {
+			break
+		}
+
+		/*此时说明listHeight已经发生了变化，我们要拿到那个更新的值*/
+		listHeight = s.getHeight()
+	}
+
+	/*开始给每一层的指针都进行更新*/
+	for i := 0; i < height; i-- {
+		for { /*不断重复的cas赋值操作*/
+			if s.arena.getNode(prev[i]) == nil {
+				AssertTrue(i > 1)
+				prev[i], next[i] = s.findSpliceForLevel(key, s.headOffset, i)
+				AssertTrue(prev[i] != next[i])
+			}
+
+			x.tower[i] = next[i]
+			/*获取前一个节点*/
+			preNode := s.arena.getNode(prev[i])
+
+			if preNode.casnextOffset(i, next[i], s.arena.getNodeOffset(x)) {
+				break /*赋值成功*/
+			}
+
+			/*cas失败进行重试,重新获取相应的位置*/
+			prev[i], next[i] = s.findSpliceForLevel(key, s.headOffset, i)
+
+			/*判断特殊情况*/
+			if prev[i] == next[i] { /*在其他线程有人占有了这个位置，我们将其替换即可，指针的替换由早先占有的线程进行操作*/
+				AssertTrue(i == 0)
+				vo := s.arena.putVal(v)
+				encValue := encodeValue(vo, v.EncodeSize())
+				prevNode := s.arena.getNode(prev[i]) /*节点也需要更新，因为cas失败了*/
+				prevNode.setValue(s.arena, encValue)
+
+				return
+			}
+		}
+	}
+}
+
+func encodeValue(valueOffset uint32, valueSize uint32) uint64 {
+	return uint64(valueOffset) | uint64(valueSize)<<32
+}
+
+func (s *SkipList) Get(key []byte) ValueStruct {
+	n, _ := s.findNear(key, false, true)
+	if n == nil { /*没能找到*/
+		return ValueStruct{}
+	}
+
+	nextKey := s.arena.getKey(n.keyOffset, n.keySize)
+	/*判断是否相等*/
+	if !SameKey(key, nextKey) { /*我们没能找到了节点*/
+		return ValueStruct{}
+	}
+
+	valOffset, valSize := n.getValueOffset()
+	vs := s.arena.getVal(valOffset, valSize)
+	vs.Version = ParseTs(key)
+	return vs
+}
+
+func (s *SkipList) getNext(curNode *node, level int) *node {
+	nextNode := s.arena.getNode(curNode.tower[level])
+
+	return nextNode
+}
+
+func (s *SkipList) findLast() *node { /*找到最后一个节点*/
+	n := s.getHead()
+
+	/*自上而下不断下沉去寻找*/
+	i := int(s.getHeight()) - 1
+
+	for {
+		next := s.getNext(n, i)
+		if next == nil { /*走到了该层次的尽头*/
+			if i == 0 {
+				if n == s.getHead() { /*这是一个空跳表*/
+					return nil
+				}
+				return n
+			}
+			i--
+		}
+		/*next 不是空的 继续在这个层次寻找*/
+		n = next
+
 	}
 }
