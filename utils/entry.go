@@ -1,5 +1,7 @@
 package utils
 
+import "encoding/binary"
+
 type ValueStruct struct {
 	Meta      byte
 	Value     []byte
@@ -47,7 +49,34 @@ func (v *ValueStruct) EncodeSize() uint32 {
 	return uint32(sz + enc)
 }
 
-func newNode(arena *Arena, v ValueStruct, h int) *node {
-	/*TODO: 在内存池中开辟新的空间存储value*/
-	return &node{}
+func (v *ValueStruct) EncodeValue(b []byte) uint32 {
+	sz := binary.PutUvarint(b[:], v.ExpiresAt)
+	n := copy(b[sz:], v.Value)
+
+	return uint32(sz + n)
+}
+
+func (v *ValueStruct) DecodeValue(b []byte) {
+	var sz int
+	v.ExpiresAt, sz = binary.Uvarint(b)
+
+	v.Value = b[sz:]
+}
+
+func newNode(arena *Arena, key []byte, v ValueStruct, h int) *node {
+	/*在内存池中开辟新的空间存储value*/
+	nodeOffset := arena.putNode(uint16(h))
+	keyOffset := arena.putKey(key)
+	keySize := len(key)
+	valOffset := arena.putVal(v)
+	valSize := len(v.Value)
+	value := encodeValue(valOffset, uint32(valSize))
+
+	node := arena.getNode(nodeOffset)
+	node.value = value
+	node.keySize = uint16(keySize)
+	node.height = uint16(h)
+	node.keyOffset = keyOffset
+
+	return node
 }

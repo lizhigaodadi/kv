@@ -109,10 +109,15 @@ func NewEntry(Key []byte, Value []byte) *Entry {
 		Value: Value,
 	}
 }
-func NewSkipList(test_num int) *SkipList {
+func NewSkipList(num int) *SkipList {
 	s := &SkipList{}
+	s.arena = newArena(uint32(num))
+	headOffset := s.arena.putNode(maxLevel)
 
-	return list
+	s.height = 1
+	s.ref = 1
+	s.headOffset = headOffset
+	return s
 }
 
 func (list *SkipList) calcScore(Key []byte) (score float64) {
@@ -150,7 +155,7 @@ func (s *SkipList) Draw(align bool) {
 		var nodeStr string
 		next := s.getNext(s.getHead(), level)
 		for next != nil {
-			nodeStr = fmt.Sprintf("%s(%s)", next.getKey(s.arena), s.arena.getVal(next.getValueOffset()))
+			nodeStr = fmt.Sprintf("%s(%s)", next.getKey(s.arena), s.arena.getVal(next.getValueOffset()).Value)
 
 			reverseTree[level] = append(reverseTree[level], nodeStr)
 
@@ -217,15 +222,6 @@ func (s *SkipList) Search(key []byte) ValueStruct {
 
 }
 
-func newHeader() *Entry {
-	return &Entry{
-		Key:   nil,
-		Value: nil,
-		score: -1,
-		level: make([]*Entry, maxLevel),
-	}
-}
-
 func RandLevel() int {
 	i := 1
 	threshold := levelThreshold * 10
@@ -249,6 +245,7 @@ type node struct {
 	keyOffset uint32 /*不可变不需要加锁访问*/
 	keySize   uint16 /*不可变不需要加锁访问*/
 	height    uint16
+
 	/*node 的next指针数组*/
 	tower [maxLevel]uint32
 }
@@ -413,7 +410,7 @@ func (s *SkipList) Add(e *Entry) {
 	var prev [maxLevel + 1]uint32
 	var next [maxLevel + 1]uint32
 
-	prev[maxLevel] = s.headOffset
+	prev[listHeight] = s.headOffset
 
 	for i := int(listHeight) - 1; i >= 0; i-- {
 		prev[i], next[i] = s.findSpliceForLevel(key, prev[i+1], i)
@@ -430,7 +427,7 @@ func (s *SkipList) Add(e *Entry) {
 	/*获取到一个随机的层级*/
 	height := RandLevel()
 
-	x := newNode(s.arena, v, height) /*新节点*/
+	x := newNode(s.arena, key, v, height) /*新节点*/
 	listHeight = s.getHeight()
 
 	for height > int(listHeight) { /*如果height大于listHeight，我们就需要重新赋值*/
@@ -443,7 +440,7 @@ func (s *SkipList) Add(e *Entry) {
 	}
 
 	/*开始给每一层的指针都进行更新*/
-	for i := 0; i < height; i-- {
+	for i := 0; i < height; i++ {
 		for { /*不断重复的cas赋值操作*/
 			if s.arena.getNode(prev[i]) == nil {
 				AssertTrue(i > 1)

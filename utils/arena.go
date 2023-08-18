@@ -9,6 +9,9 @@ import (
 
 const (
 	MaxNodeSize = 32
+	/*nodeAligns代表了node内存对齐时最大的填补偏移量*/
+	nodeAlign   = uint32(unsafe.Sizeof(uint64(0))) - 1
+	maxNodeSize = unsafe.Sizeof(node{})
 )
 
 type Arena struct {
@@ -51,30 +54,60 @@ func (a *Arena) allocate(sz uint32) uint32 {
 	return offset - sz
 }
 
-func (a *Arena) putNode() uint32 {
-	nodeSize := uint32(unsafe.Sizeof(node{}))
-	return a.allocate(nodeSize)
+func (a *Arena) putKey(key []byte) uint32 {
+	/*存储一个Key对象进内存池中*/
+	keySize := len(key)
+	keyOffset := a.allocate(uint32(keySize))
+	buf := a.buf[keyOffset : keyOffset+uint32(keySize)]
+	/*全量复制*/
+	AssertTrue(copy(buf, key) == keySize)
+
+	return keyOffset
+}
+
+func (a *Arena) putNode(height uint16) uint32 {
+	sizeOffset := unsafe.Sizeof(uint32(0))
+	unusedSize := int(sizeOffset) * (int(maxLevel) - int(height))
+
+	l := MaxNodeSize - uint32(unusedSize) + uint32(nodeAlign) /*要分配的内存大小，+nodeAlign是为了考虑到内存对齐最差的情况*/
+
+	n := a.allocate(l)
+
+	m := (n + nodeAlign) &^ nodeAlign /*将n向下取整取得nodeAlign 的整数倍*/
+	return m
 }
 
 func (arena *Arena) getNode(nodeOffset uint32) *node {
-	/*TODO:通过偏移量来找到目标节点*/
-	return &node{}
+	if nodeOffset == 0 {
+		return nil
+	}
+	/*通过偏移量来找到目标节点*/
+	n := (*node)(unsafe.Pointer(&arena.buf[nodeOffset]))
+	return n
 }
 
 func (arena *Arena) putVal(v ValueStruct) uint32 {
-	/*TODO: 在内存池中存储相应的节点并将偏移量返回*/
-	return 0
+	/*在内存池中存储相应的节点并将偏移量返回*/
+
+	vSize := v.EncodeSize() /*存储valueStruct 所需要的大小*/
+	offset := arena.allocate(vSize)
+
+	v.EncodeValue(arena.buf[offset:])
+
+	return offset
 }
 
 func (arena *Arena) getNodeOffset(node *node) uint32 {
-	/*TODO: 通过节点在内存池中获取相应的偏移量*/
+	/* node即为byte数组的某一个元素的地址，我们获取byte的首个地址，然后相减即使偏移量*/
+	bufOffset := uintptr(unsafe.Pointer(&arena.buf[0]))
+	nodeOffset := uintptr(unsafe.Pointer(node))
 
-	return 0
+	return uint32(nodeOffset - bufOffset)
 }
 
 func AssertTrue(b bool) {
 	if !b {
-		log.Fatal("%+v", errors.Errorf("Assert failed"))
+		log.Fatal("", errors.Errorf("Assert failed"))
 	}
 }
 
