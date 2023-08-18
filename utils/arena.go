@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/binary"
 	"github.com/pkg/errors"
 	"log"
 	"sync/atomic"
@@ -112,11 +113,21 @@ func AssertTrue(b bool) {
 }
 
 func (arena *Arena) getKey(keyOffset uint32, keySize uint16) []byte {
-	/*TODO: 通过key偏移量和key大小在内存池中取出key并返回*/
-	return make([]byte, keySize)
+	/*通过key偏移量和key大小在内存池中取出key并返回*/
+	return arena.buf[keyOffset : keyOffset+uint32(keySize)]
 }
 
 func (arena *Arena) getVal(valOffset uint32, valSize uint32) ValueStruct {
-	/*TODO: 根据偏移量和大小在内存池中获取Value并将其封装为ValueStruct*/
-	return ValueStruct{}
+	/*根据偏移量和大小在内存池中获取Value并将其封装为ValueStruct*/
+	valueBuf := arena.buf[valOffset : valOffset+valSize]
+
+	expiresAt, s := binary.Uvarint(valueBuf)
+	value := valueBuf[s:]
+
+	vs := ValueStruct{
+		Value:     value,
+		ExpiresAt: expiresAt,
+	}
+
+	return vs
 }

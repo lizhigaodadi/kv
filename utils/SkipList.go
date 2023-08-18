@@ -264,24 +264,24 @@ func (n *node) getValueOffset() (uint32, uint32) {
 	return decodeValue(value)
 }
 
-func (s *node) getKey(arena *Arena) []byte {
-	/*TODO: 通过Arena内存池获取Key*/
-	return make([]byte, 5)
+func (n *node) getKey(arena *Arena) []byte {
+	/*通过Arena内存池获取Key*/
+	return arena.getKey(n.keyOffset, n.keySize)
 }
 
-func (s *node) setValue(arena *Arena, vo uint64) {
-	/*TODO: 设置相关的值*/
-	atomic.StoreUint64(&s.value, vo)
+func (n *node) setValue(arena *Arena, vo uint64) {
+	/*设置相关的值*/
+	atomic.StoreUint64(&n.value, vo)
 }
 
 /*获取该节点在h层的next指针*/
-func (s *node) getNextOffset(h int) uint32 {
-	return atomic.LoadUint32(&s.tower[h])
+func (n *node) getNextOffset(h int) uint32 {
+	return atomic.LoadUint32(&n.tower[h])
 }
 
 /*通过cas 操作更新节点的next指针*/
-func (s *node) casnextOffset(h int, old, val uint32) bool {
-	return atomic.CompareAndSwapUint32(&s.tower[h], old, val)
+func (n *node) casnextOffset(h int, old, val uint32) bool {
+	return atomic.CompareAndSwapUint32(&n.tower[h], old, val)
 }
 
 /*
