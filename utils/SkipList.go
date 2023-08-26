@@ -92,12 +92,13 @@ func (it *SkipListIterator) SeekForPrev(key []byte) { /*尽量往前移动*/
 
 func (it *SkipListIterator) Next() {
 	AssertTrue(it.Valid())
-	it.SkipList.getNext(it.curNode, 0)
+	it.curNode = it.SkipList.getNext(it.curNode, 0)
 }
 func (it *SkipListIterator) Item() *Entry {
 	return &Entry{
-		Key:      it.Key(),
-		Value:    it.Value().Value,
+		Key:   it.Key(),
+		Value: it.Value().Value,
+
 		ExpireAt: it.Value().ExpiresAt,
 		Version:  it.Value().Version,
 	}
@@ -217,6 +218,7 @@ func (s *SkipList) Search(key []byte) ValueStruct {
 	}
 	/*发现相等了*/
 	valOffset, valSize := node.getValueOffset()
+	//fmt.Printf("valOffset: %d\n", valOffset)
 	vs := s.arena.getVal(valOffset, valSize)
 	return vs
 
@@ -291,15 +293,12 @@ func (n *node) casnextOffset(h int, old, val uint32) bool {
 func (s *SkipList) findSpliceForLevel(key []byte, before uint32, level int) (uint32, uint32) {
 	for {
 		beforeNode := s.arena.getNode(before)
-
 		next := beforeNode.getNextOffset(level)
-
 		nextNode := s.arena.getNode(next)
 		if nextNode == nil {
 			/*已经找到了最后before有节点而next不存在节点，之后可以在before后面添加节点*/
 			return before, next
 		}
-
 		/*开始比较节点*/
 		nextKey := nextNode.getKey(s.arena)
 		cmp := CompareKeys(key, nextKey)
@@ -322,7 +321,6 @@ func (s *SkipList) findSpliceForLevel(key []byte, before uint32, level int) (uin
 */
 func (s *SkipList) findNear(key []byte, less bool, allowEqual bool) (*node, bool) {
 	pre := s.getHead()
-
 	level := int(s.getHeight()) - 1
 
 	/*自上而下去寻找最近的节点*/
@@ -331,7 +329,7 @@ func (s *SkipList) findNear(key []byte, less bool, allowEqual bool) (*node, bool
 		if next == nil {
 			if level > 0 {
 				level--
-				break
+				continue
 			}
 
 			/*说明已经走到了最底层的最后*/
@@ -392,7 +390,6 @@ func (s *SkipList) findNear(key []byte, less bool, allowEqual bool) (*node, bool
 		return pre, false
 
 	}
-	return nil, false
 }
 
 func (s *SkipList) Add(e *Entry) {
@@ -457,7 +454,7 @@ func (s *SkipList) Add(e *Entry) {
 			}
 
 			/*cas失败进行重试,重新获取相应的位置*/
-			prev[i], next[i] = s.findSpliceForLevel(key, s.headOffset, i)
+			prev[i], next[i] = s.findSpliceForLevel(key, prev[i], i)
 
 			/*判断特殊情况*/
 			if prev[i] == next[i] { /*在其他线程有人占有了这个位置，我们将其替换即可，指针的替换由早先占有的线程进行操作*/

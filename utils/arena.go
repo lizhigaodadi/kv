@@ -1,9 +1,9 @@
 package utils
 
 import (
-	"encoding/binary"
 	"github.com/pkg/errors"
 	"log"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 )
@@ -19,6 +19,7 @@ type Arena struct {
 	n          uint32
 	shouldGrow bool
 	buf        []byte
+	mm         sync.Mutex
 }
 
 func newArena(bufSize uint32) *Arena {
@@ -36,6 +37,9 @@ func (a *Arena) allocate(sz uint32) uint32 {
 
 	/*判断一下内存是否够*/
 	if len(a.buf)-int(offset) < MaxNodeSize {
+		//a.mm.Lock()
+		//if len(a.buf)-int(offset) < MaxNodeSize {
+
 		/*将内存翻倍一下*/
 		growBy := uint32(len(a.buf))
 		if growBy > 1<<30 {
@@ -50,6 +54,8 @@ func (a *Arena) allocate(sz uint32) uint32 {
 		AssertTrue(len(a.buf) == copy(newBuf, a.buf))
 
 		a.buf = newBuf
+		//}
+		//a.mm.Unlock()
 	}
 
 	return offset - sz
@@ -78,29 +84,29 @@ func (a *Arena) putNode(height uint16) uint32 {
 	return m
 }
 
-func (arena *Arena) getNode(nodeOffset uint32) *node {
+func (a *Arena) getNode(nodeOffset uint32) *node {
 	if nodeOffset == 0 {
 		return nil
 	}
 	/*通过偏移量来找到目标节点*/
-	n := (*node)(unsafe.Pointer(&arena.buf[nodeOffset]))
+	n := (*node)(unsafe.Pointer(&a.buf[nodeOffset]))
 	return n
 }
 
-func (arena *Arena) putVal(v ValueStruct) uint32 {
+func (a *Arena) putVal(v ValueStruct) uint32 {
 	/*在内存池中存储相应的节点并将偏移量返回*/
 
 	vSize := v.EncodeSize() /*存储valueStruct 所需要的大小*/
-	offset := arena.allocate(vSize)
+	offset := a.allocate(vSize)
 
-	v.EncodeValue(arena.buf[offset:])
+	v.EncodeValue(a.buf[offset:])
 
 	return offset
 }
 
-func (arena *Arena) getNodeOffset(node *node) uint32 {
+func (a *Arena) getNodeOffset(node *node) uint32 {
 	/* node即为byte数组的某一个元素的地址，我们获取byte的首个地址，然后相减即使偏移量*/
-	bufOffset := uintptr(unsafe.Pointer(&arena.buf[0]))
+	bufOffset := uintptr(unsafe.Pointer(&a.buf[0]))
 	nodeOffset := uintptr(unsafe.Pointer(node))
 
 	return uint32(nodeOffset - bufOffset)
@@ -117,17 +123,10 @@ func (arena *Arena) getKey(keyOffset uint32, keySize uint16) []byte {
 	return arena.buf[keyOffset : keyOffset+uint32(keySize)]
 }
 
-func (arena *Arena) getVal(valOffset uint32, valSize uint32) ValueStruct {
+func (arena *Arena) getVal(valOffset uint32, valSize uint32) (ret ValueStruct) {
 	/*根据偏移量和大小在内存池中获取Value并将其封装为ValueStruct*/
-	valueBuf := arena.buf[valOffset : valOffset+valSize]
+	//fmt.Printf("valSize: %d\n", valSize)
+	ret.DecodeValue(arena.buf[valOffset : valOffset+valSize])
 
-	expiresAt, s := binary.Uvarint(valueBuf)
-	value := valueBuf[s:]
-
-	vs := ValueStruct{
-		Value:     value,
-		ExpiresAt: expiresAt,
-	}
-
-	return vs
+	return
 }
