@@ -66,7 +66,7 @@ func (bf *BloomFilter) reset() {
 	}
 }
 
-func newBloomFilter(numEntries int, bitsPerKey int) *BloomFilter {
+func newBloomFilter(numEntries int, bitsPerKey float64) *BloomFilter {
 	return initFilter(numEntries, bitsPerKey)
 }
 
@@ -90,7 +90,7 @@ func (bf *BloomFilter) Insert(h uint32) bool {
 	return true
 }
 
-func initFilter(numEntries int, bitsPerKey int) *BloomFilter {
+func initFilter(numEntries int, bitsPerKey float64) *BloomFilter {
 	bf := &BloomFilter{}
 	if bitsPerKey < 0 {
 		bitsPerKey = 0

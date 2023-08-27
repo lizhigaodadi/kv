@@ -29,3 +29,28 @@ func TestCacheBasicCRUD(t *testing.T) {
 	}
 	fmt.Printf("at last: %s\n", cache)
 }
+
+type A struct {
+	a int
+}
+
+func (a *A) Show() {
+	fmt.Printf("HelloWorld")
+}
+func (a A) ShowAddress() {
+	fmt.Printf("pointer address: %p\n", &a)
+}
+func (a *A) ShowAddressPtr() {
+	fmt.Printf("pointer address: %p\n", a)
+}
+
+func TestString(t *testing.T) {
+	a := A{}
+	ap := &a
+	a.ShowAddress()
+	ap.ShowAddress()
+	fmt.Printf("------------------------\n")
+	a.ShowAddressPtr()
+	ap.ShowAddressPtr()
+
+}

@@ -6,9 +6,9 @@ import (
 )
 
 type SegmentedLRU struct {
-	data                       map[uint32]*list.Element
-	stageOneCap, stageTwoCap   uint32
-	stageOneList, stageTwoList list.List
+	data                       map[uint64]*list.Element
+	stageOneCap, stageTwoCap   uint64
+	stageOneList, stageTwoList *list.List
 }
 
 const ( /*iota是用于定义枚举的,STAGE_TWO自动赋值为2*/
@@ -16,19 +16,19 @@ const ( /*iota是用于定义枚举的,STAGE_TWO自动赋值为2*/
 	STAGE_TWO
 )
 
-func NewSegmentedLRU(data map[uint32]*list.Element, stageOneCap, stageTwoCap uint32) *SegmentedLRU {
+func NewSegmentedLRU(data map[uint64]*list.Element, stageOneCap, stageTwoCap uint64) *SegmentedLRU {
 	return &SegmentedLRU{
 		data:         data,
 		stageOneCap:  stageOneCap,
 		stageTwoCap:  stageTwoCap,
-		stageOneList: *list.New(),
-		stageTwoList: *list.New(),
+		stageOneList: list.New(),
+		stageTwoList: list.New(),
 	}
 }
 
 func (lru *SegmentedLRU) Add(newItem storeItem) (evictItem storeItem, evcited bool) {
 	if lru.stageOneList.Len() < int(lru.stageOneCap) || lru.Len() < lru.stageOneCap+lru.stageTwoCap { /*这种情况下我们直接进行插入*/
-		lru.data[newItem.key] = lru.stageOneList.PushFront(newItem)
+		lru.data[newItem.key] = lru.stageOneList.PushFront(&newItem)
 
 		return storeItem{}, false
 	}
@@ -58,7 +58,7 @@ func (lru *SegmentedLRU) Get(item *list.Element) {
 		return
 	}
 	/*此时item 是 STAGE_ONE 判断一下stageTwo是否已经满了*/
-	if uint32(lru.stageTwoList.Len()) < lru.stageTwoCap { /*直接往里头添加即可*/
+	if uint64(lru.stageTwoList.Len()) < lru.stageTwoCap { /*直接往里头添加即可*/
 		e := lru.stageOneList.Back()
 		targetItem := e.Value.(*storeItem)
 		/*从第一阶段删除*/
@@ -89,23 +89,30 @@ func (lru *SegmentedLRU) Get(item *list.Element) {
 
 }
 
-/*TODO: 这个并没有在链表中真实的删除，这是为了后续添加元素不用重复分配链表节点的内存空间了*/
+/* 这个并没有在链表中真实的删除，这是为了后续添加元素不用重复分配链表节点的内存空间了*/
 func (lru *SegmentedLRU) victim() *storeItem {
 	if lru.Len() < lru.stageOneCap+lru.stageTwoCap {
 		return nil
 	}
 
 	v := lru.stageOneList.Back()
+	if v.Value == nil {
+		fmt.Printf("Hello World")
+
+	}
 	return v.Value.(*storeItem)
 }
 
 func (lru *SegmentedLRU) String() string {
 	var s string
+	//fmt.Printf("stageOneList len : %d", lru.stageOneList.Len())
 	for e := lru.stageOneList.Front(); e != nil; e = e.Next() {
 		s += fmt.Sprintf("%v,", e.Value.(*storeItem).Value)
 	}
 
 	s += "|"
+	//fmt.Printf("stageTwoList len : %d", lru.stageTwoList.Len())
+
 	for e := lru.stageTwoList.Front(); e != nil; e = e.Next() {
 		s += fmt.Sprintf("%v,", e.Value.(*storeItem).Value)
 	}
@@ -113,6 +120,6 @@ func (lru *SegmentedLRU) String() string {
 	return s
 }
 
-func (lru *SegmentedLRU) Len() uint32 {
-	return uint32(lru.stageOneList.Len() + lru.stageTwoList.Len())
+func (lru *SegmentedLRU) Len() uint64 {
+	return uint64(lru.stageOneList.Len() + lru.stageTwoList.Len())
 }

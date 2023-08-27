@@ -7,19 +7,19 @@ import (
 
 /*WindowsLRU对象*/
 type WindowsLRU struct {
-	data map[uint32]*list.Element
+	data map[uint64]*list.Element
 	cap  int
 	list *list.List
 }
 
 type storeItem struct {
 	stage    int /*表示这是哪个段的数据*/
-	key      uint32
-	conflict uint32
+	key      uint64
+	conflict uint64
 	Value    interface{}
 }
 
-func NewWindowsLRU(cap int, data map[uint32]*list.Element) *WindowsLRU {
+func NewWindowsLRU(cap int, data map[uint64]*list.Element) *WindowsLRU {
 	return &WindowsLRU{
 		cap:  cap,
 		data: data,
@@ -48,7 +48,7 @@ func (lru *WindowsLRU) Add(item storeItem) (eItem storeItem, evicted bool) {
 	eItem, *abandonedStoreItem = *abandonedStoreItem, item /*交换赋值，减少内存的开辟*/
 
 	/*现在添加新的元素进去*/
-	lru.data[item.key] = lru.list.PushFront(&item)
+	lru.data[item.key] = abandonedItem
 
 	return eItem, true
 }
