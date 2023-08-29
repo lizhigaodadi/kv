@@ -17,6 +17,7 @@ const ( /*iota是用于定义枚举的,STAGE_TWO自动赋值为2*/
 )
 
 func NewSegmentedLRU(data map[uint64]*list.Element, stageOneCap, stageTwoCap uint64) *SegmentedLRU {
+
 	return &SegmentedLRU{
 		data:         data,
 		stageOneCap:  stageOneCap,

@@ -3,7 +3,7 @@ package cache
 type Filter []byte
 
 type BloomFilter struct {
-	bitmap Filter
+	Bitmap Filter
 	k      uint8
 }
 
@@ -26,7 +26,7 @@ func (bf *BloomFilter) MayContains(h uint32) bool {
 
 	for i := uint8(0); i < k; i++ {
 		bitPos := h % nBits
-		if (bf.bitmap[bitPos/8] & 1 << (bitPos % 8)) == 0 {
+		if (bf.Bitmap[bitPos/8] & 1 << (bitPos % 8)) == 0 {
 			return false
 		}
 		h += delta
@@ -61,13 +61,19 @@ func (bf *BloomFilter) reset() {
 	if bf == nil {
 		return
 	}
-	for i := range bf.bitmap {
-		bf.bitmap[i] = 0
+	for i := range bf.Bitmap {
+		bf.Bitmap[i] = 0
 	}
 }
 
-func newBloomFilter(numEntries int, bitsPerKey float64) *BloomFilter {
+func NewBloomFilter(numEntries int, bitsPerKey float64) *BloomFilter {
 	return initFilter(numEntries, bitsPerKey)
+}
+
+func (bf *BloomFilter) AppendBatch(hashKeys []uint32) {
+	for _, key := range hashKeys {
+		bf.Insert(key)
+	}
 }
 
 func (bf *BloomFilter) InsertKey(key []byte) bool {
@@ -84,7 +90,7 @@ func (bf *BloomFilter) Insert(h uint32) bool {
 	delta := h>>17 | h<<15
 	for j := uint8(0); j < k; j++ {
 		bitPos := h % (nBits)
-		bf.bitmap[bitPos/8] |= 1 << (bitPos % 8)
+		bf.Bitmap[bitPos/8] |= 1 << (bitPos % 8)
 		h += delta
 	}
 	return true
@@ -114,12 +120,12 @@ func initFilter(numEntries int, bitsPerKey float64) *BloomFilter {
 	nBits = nBytes * 8               /*将其变为8的整数倍*/
 	filter := make([]byte, nBytes+1) /*warning: 注意这里多分配了一个，之后计算长度也要减少一个*/
 	filter[nBytes] = uint8(k)
-	bf.bitmap = filter
+	bf.Bitmap = filter
 	return bf
 }
 
 func (bf *BloomFilter) Len() uint32 {
-	return uint32(len(bf.bitmap))
+	return uint32(len(bf.Bitmap))
 }
 
 func Hash(b []byte) uint32 {

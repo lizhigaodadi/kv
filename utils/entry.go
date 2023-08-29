@@ -23,6 +23,13 @@ type Entry struct {
 	ValThreshold int
 }
 
+func (e *Entry) EncodedSize() uint32 {
+	sz := len(e.Value)
+	enc := sizeVarInt(uint64(e.ExpireAt))
+	enc += sizeVarInt(uint64(e.Meta))
+	return uint32(sz + enc)
+}
+
 func (e *Entry) getValue() []byte {
 	return e.Value
 }
