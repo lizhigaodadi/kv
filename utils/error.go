@@ -5,3 +5,9 @@ func CondPanic(condition bool, e error) {
 		panic(e)
 	}
 }
+
+func Panic(e error) {
+	if e != nil {
+		panic(e)
+	}
+}
