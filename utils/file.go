@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"hash/crc32"
+	"os"
+	"path/filepath"
 )
 
 func CompareKeys(key1, key2 []byte) int {
@@ -32,4 +34,28 @@ func VerifyCheckSum(actual []byte, expected []byte) error {
 
 func CalculateChecksum(b []byte) uint64 {
 	return uint64(crc32.Checksum(b, CastageoliCrcTable))
+}
+func SyncDir(dir string) error {
+	/*同步某个目录，用于删除或新增某个文件后*/
+	fp, err := OpenDir(dir)
+	defer fp.Close()
+	if err != nil {
+		return err
+	}
+	if err = fp.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func OpenDir(dir string) (*os.File, error) {
+	/*打开一个文件夹*/
+	return os.Open(dir)
+}
+
+func FileNameSSTable(dir string, id uint64) string {
+	return filepath.Join(dir, fmt.Sprintf("%5d.%s", id, FileSuffixNameSSTable))
+}
+func FiNameWalLog(dir string, id uint64) string {
+	return filepath.Join(dir, fmt.Sprintf("%5d.%s", id, FileSuffixNameWalLog))
 }

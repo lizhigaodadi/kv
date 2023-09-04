@@ -1,6 +1,6 @@
 syntax="proto3";
 
-//option go_package= "./";
+option go_package= "./";
 package pb;
 
 message TableIndex {
@@ -9,11 +9,26 @@ message TableIndex {
     uint64 maxVersion = 3;
     uint32 keyCount = 4;
     uint32 staleDataSize = 5;
-}
+};
 
 
 message BlockOffset {
   bytes key = 1;
   uint32 offset = 2;
   uint32 length = 3;
-};
+}
+
+enum Operation {
+  CREATE = 0;
+  DELETE = 1;
+}
+message ManifestChange {
+  uint64 Id = 1;
+  Operation Op = 2;
+  uint32 Level = 3;
+  bytes Checksum = 4;
+}
+
+message ManifestChangeSet {
+  repeated ManifestChange changes = 1;
+}
