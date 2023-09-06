@@ -1,0 +1,123 @@
+//
+// Created by li.zhigao on 2023/7/31.
+//
+
+#include "../../include/sds.h"
+
+char getFlags(sds s) {
+    return s[-1];
+}
+
+char *show_sds(sds s) {
+    char flags = getFlags(s);
+    int len;
+    int alloc;
+
+    switch(flags & SDS_TYPE_MASK) {
+        case SDS_TYPE_0: {
+            //TODO: Directly enter the expansion logic
+            SDS_HDR_VAR(0,s);
+            len = sh->len;
+            alloc = sh->alloc;
+        }
+        case SDS_TYPE_8: {
+            SDS_HDR_VAR(8,s);
+            len = sh->len;
+            alloc = sh->alloc;
+
+        }
+        case SDS_TYPE_16: {
+            SDS_HDR_VAR(16,s);
+            len = sh->len;
+            alloc = sh->alloc;
+        }
+
+    }
+
+    printf("hdr message: len: %d,alloc: %d,buf: %s\n",len,alloc,s);
+}
+
+/**
+ * This method may involve memory allocation
+ * @param s
+ * @param string
+ * @return Returns a pointer to the occurrence of storing real data
+ */
+sds set_sds(sds s,char *string) {
+    int len = strlen(string);
+    //Obtain header information
+    char flags = getFlags(s);
+
+    switch(flags & SDS_TYPE_MASK) {
+        case SDS_TYPE_0: {
+            //TODO: Directly enter the expansion logic
+        }
+        case SDS_TYPE_8: {
+            SDS_HDR_VAR(8,s);
+            int sum = sh->len + sh->alloc;
+            if (sum <= len) {
+                memcpy(sh->buf,string,len);
+                sh->buf[len] = '\0';
+
+                //更新各个参数
+                sh->len = len;
+                sh->alloc = sum - len;
+
+            }else {
+                printf("---------------------UNDO MODULE-------------\n");
+                //TODO: Directly enter the expansion logic
+            }
+        }
+        case SDS_TYPE_16: {
+            SDS_HDR_VAR(16,s);
+            int sum = sh->len + sh->alloc;
+            if (sum <= len) {
+                memcpy(sh->buf,string,len);
+                sh->buf[len] = '\0';
+
+                //Update various args
+
+                sh->len = len;
+                sh->alloc = sum - len;
+                sh->buf[len] = '\0';
+
+            }else {
+                //TODO: Directly enter the expansion logic
+            }
+
+        }
+    }
+
+
+    return s;
+
+}
+
+
+
+/**
+ *
+ * @param string_size
+ * @return
+ */
+static inline char sds_req_type(int string_size) {
+    if (string_size == 0) {
+        return SDS_TYPE_0;
+    }else if (string_size < SDS_TYPE_8_LEN) {
+        return SDS_TYPE_8;
+    } else {
+        return SDS_TYPE_16;
+    }
+}
+/**
+ *
+ * @param init
+ * @return
+ */
+sds new_sds(char *init) {
+    int len;
+    //get the init string len
+    len = strlen(init);
+
+    return _new_sds_len(init,len,0);
+}

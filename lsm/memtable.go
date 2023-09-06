@@ -47,6 +47,7 @@ func (lsm *LSM) recovery() (*memTable, []*memTable) {
 
 	mt := &memTable{}
 	mt.sl = utils.NewSkipList(1 << 20)
+	return nil, nil
 }
 
 type memTable struct {

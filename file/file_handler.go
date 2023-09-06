@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	bufferSize = 1 << 12
-	oneGB      = 1 << 30
-	writeGap   = 1 << 10
+	bufferSize           = 1 << 12
+	oneGB                = 1 << 30
+	writeGap             = 1 << 10
+	initSizeFileInMemory = 1 << 7
 )
 
 type fileInMemory struct {
@@ -51,11 +52,12 @@ func LoadFileToMemory(fd *os.File, DataSize int) (*fileInMemory, error) {
 		if cap(fim.Data) <= n+written { /*不够用了需要扩容*/
 			newSize := 2 * cap(fim.Data)
 			newBuffer := make([]byte, newSize)
-			utils.CondPanic(copy(newBuffer[:], fim.Data[:written]) == written, fmt.Errorf("write failed"))
+			utils.CondPanic(copy(newBuffer[:], fim.Data[:written]) != written, fmt.Errorf("write failed"))
 			fim.Data = newBuffer
 		}
 
-		utils.CondPanic(copy(fim.Data[written:], buffer[:]) == n, fmt.Errorf("write failed"))
+		utils.CondPanic(copy(fim.Data[written:], buffer[:n]) != n, fmt.Errorf("write failed"))
+		written += n
 		fim.DataSize += n
 	}
 	return fim, nil
@@ -75,7 +77,11 @@ func newFileInMemory(fileName string, flag int) (*fileInMemory, error) {
 		return LoadFileToMemory(fd, int(DataSize))
 	}
 
-	return &fileInMemory{fd: fd}, nil
+	return &fileInMemory{
+		fd:       fd,
+		DataSize: 0,
+		Data:     make([]byte, initSizeFileInMemory),
+	}, nil
 }
 
 /*直接在数组原本的基础上追加*/
@@ -95,11 +101,9 @@ func (fim *fileInMemory) Append(buf []byte) error {
 			errors.New("copy failed"))
 		fim.Data = newBuf
 	}
-
 	/*追加数据的逻辑*/
-	utils.CondPanic(copy(fim.Data[fim.DataSize:fim.DataSize+needSize], buf) == needSize,
+	utils.CondPanic(copy(fim.Data[fim.DataSize:fim.DataSize+needSize], buf) != needSize,
 		errors.New("copy failed"))
-
 	fim.DataSize += needSize
 	return nil
 }
@@ -123,7 +127,7 @@ func (fim *fileInMemory) AppendBuffer(offset uint32, buf []byte) error {
 		fim.Data = newBuf
 	}
 
-	utils.CondPanic(copy(fim.Data[offset:], buf[:]) == len(buf), fmt.Errorf("copy failed"))
+	utils.CondPanic(copy(fim.Data[offset:], buf[:]) != len(buf), fmt.Errorf("copy failed"))
 	if int(offset)+len(buf) > fim.DataSize {
 		fim.DataSize = int(offset) + len(buf)
 	}
@@ -156,12 +160,13 @@ func (fim *fileInMemory) ReName(name string) error {
 /*AllocateSlice对应的读取操作*/
 func (fim *fileInMemory) Slice(offset int) []byte {
 	sz := binary.BigEndian.Uint32(fim.Data[offset:])
+	fmt.Printf("读取到的头部大小为: %d\n", sz)
 	start := offset + 4
 	next := start + int(sz)
 	if next > fim.DataSize {
 		return []byte{}
 	}
-	res := fim.Data[next:]
+	res := fim.Data[start:next]
 
 	return res
 }
@@ -177,7 +182,12 @@ func (fim *fileInMemory) Delete() error {
 		return err
 	}
 	err = fd.Close()
-	return err
+	if err != nil {
+		return nil
+	}
+	fim.Data = nil
+	fim.DataSize = 0
+	return os.Remove(fim.fd.Name())
 }
 
 /*将数据写入到磁盘当中*/
@@ -225,24 +235,32 @@ func (fim *fileInMemory) Truncate(size int) error {
 }
 
 func (fim *fileInMemory) AllocateSlice(sz, offset int) ([]byte, error) {
+	/*|--分配内存空间长度--|--分配的实际空间--|*/
+
 	start := offset + 4
 
-	if start+sz > len(fim.Data) {
+	if start+sz > cap(fim.Data) {
 		/*需要进行扩容操作*/
-		growBy := len(fim.Data)
+		growBy := cap(fim.Data)
 		if growBy > oneGB {
 			growBy = oneGB
 		}
-		if growBy < sz+4 {
-			growBy = sz + 4
+		if cap(fim.Data)+growBy < start+sz {
+			growBy = sz + start
 		}
+		newBuf := make([]byte, cap(fim.Data)+growBy)
+		utils.CondPanic(copy(newBuf, fim.Data[:fim.DataSize]) != fim.DataSize,
+			errors.New("copy failed"))
 	}
 
-	err := fim.Truncate(start + sz)
-	if err != nil {
-		return nil, err
-	}
+	/*检查是否超出了内存大小*/
+	fmt.Printf("写入的头部大小: %d", sz)
 	binary.BigEndian.PutUint32(fim.Data[offset:], uint32(sz))
+
+	/*更新DataSize*/
+	if fim.DataSize < start+sz {
+		fim.DataSize = start + sz
+	}
 
 	return fim.Data[start : start+sz], nil
 }
