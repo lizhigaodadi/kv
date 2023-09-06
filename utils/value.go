@@ -17,6 +17,9 @@ func U64ToBytes(data uint64) []byte {
 func BytesToU32(buf []byte) uint32 {
 	return binary.BigEndian.Uint32(buf)
 }
+func BytesToU64(buf []byte) uint64 {
+	return binary.BigEndian.Uint64(buf)
+}
 
 func U32ToBytes(data uint32) []byte {
 	var buf [4]byte

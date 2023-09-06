@@ -332,6 +332,9 @@ func (mf *ManifestFile) AddChanges(changes []*pb.ManifestChange) error {
 	/*判断一下是否超出了阈值*/
 	if mf.mf.Deletion > utils.ManifestDeletionsRewriteThreshold &&
 		mf.mf.Deletion > utils.ManifestDeletionRatio*(mf.mf.Creation-mf.mf.Deletion) {
+		if err := mf.reWrite(); err != nil {
+			return err
+		}
 
 	} else {
 		/*直接加入到磁盘中*/
@@ -357,7 +360,20 @@ func (mf *ManifestFile) Close() error {
 func (mf *ManifestFile) RevertToManifest(idMap map[uint64]struct{}) error {
 	for id := range mf.mf.Tables {
 		if _, ok := idMap[id]; !ok {
+			/*发现了Table中的manifest信息,idMap中不存在*/
+			return fmt.Errorf("file does not exist for table %d", id)
+		}
+	}
 
+	for id := range idMap {
+		if _, ok := mf.mf.Tables[id]; !ok {
+			/*发现错误*/
+			_ = utils.Err(fmt.Errorf("tables not exists id: %d", id))
+			/*获取到相关文件信息*/
+			fileName := utils.FileNameSSTable(mf.opt.Dir, id)
+			if err := os.Remove(fileName); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -377,4 +393,19 @@ func (mf *ManifestFile) reWrite() error {
 	mf.mf.Creation = creation
 	mf.mf.Deletion = 0
 	return nil
+}
+
+type TableMeta struct {
+	Id       uint64
+	checkSum []byte
+}
+
+func (mf *ManifestFile) AddTableMeta(levelNum int, t *TableMeta) error {
+	return mf.AddChanges([]*pb.ManifestChange{
+		newManifestChange(t.Id, uint32(levelNum), t.checkSum),
+	})
+}
+
+func (mf *ManifestFile) ManiFest() *Manifest {
+	return mf.mf
 }

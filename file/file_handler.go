@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"github.com/pkg/errors"
 	"io"
 	"kv/utils"
 	"log"
@@ -30,7 +31,7 @@ func LoadFileToMemory(fd *os.File, DataSize int) (*fileInMemory, error) {
 	fim := &fileInMemory{
 		fd:       fd,
 		Data:     make([]byte, DataSize),
-		DataSize: 0,
+		DataSize: 0, /*实际文件写入到的位置*/
 	}
 	fim.fd = fd
 	/*从文件中读取所有的数据出来*/
@@ -77,9 +78,35 @@ func newFileInMemory(fileName string, flag int) (*fileInMemory, error) {
 	return &fileInMemory{fd: fd}, nil
 }
 
+/*直接在数组原本的基础上追加*/
+func (fim *fileInMemory) Append(buf []byte) error {
+	/*TODO: 判断是否需要扩容以应对追加数据*/
+	cap := cap(fim.Data)
+	needSize := len(buf)
+	if fim.DataSize+needSize > cap { /*需要扩展*/
+		growBy := cap
+		if cap+growBy < fim.DataSize+needSize { /*仍然小于*/
+			growBy = fim.DataSize + needSize - cap
+		}
+		/*开始扩容*/
+		newBuf := make([]byte, cap+growBy)
+		/*复制数据过去*/
+		utils.CondPanic(copy(newBuf, fim.Data[:fim.DataSize]) == fim.DataSize,
+			errors.New("copy failed"))
+		fim.Data = newBuf
+	}
+
+	/*追加数据的逻辑*/
+	utils.CondPanic(copy(fim.Data[fim.DataSize:fim.DataSize+needSize], buf) == needSize,
+		errors.New("copy failed"))
+
+	fim.DataSize += needSize
+	return nil
+}
+
 /*加入数据进入*/
 func (fim *fileInMemory) AppendBuffer(offset uint32, buf []byte) error {
-	curSize := uint32(len(fim.Data))
+	curSize := uint32(cap(fim.Data))
 	needSize := offset + uint32(len(buf))
 
 	if curSize < needSize {
@@ -91,7 +118,7 @@ func (fim *fileInMemory) AppendBuffer(offset uint32, buf []byte) error {
 			growBy = uint32(len(buf))
 		}
 
-		newBuf := make([]byte, growBy)
+		newBuf := make([]byte, curSize+growBy)
 		utils.CondPanic(copy(newBuf[:], fim.Data[:curSize]) == int(curSize), fmt.Errorf("copy failed"))
 		fim.Data = newBuf
 	}

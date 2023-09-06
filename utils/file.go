@@ -3,6 +3,7 @@ package utils
 import (
 	"bytes"
 	"fmt"
+	"github.com/pkg/errors"
 	"hash/crc32"
 	"os"
 	"path/filepath"
@@ -27,9 +28,17 @@ func VerifyCheckSum(actual []byte, expected []byte) error {
 	expectedCheckSum := ByteToU64(expected)
 
 	if actualCheckSum != expectedCheckSum {
-		return fmt.Errorf("Verify CheckSum Failed")
+		return errors.New("Verify CheckSum Failed")
 	}
 	return nil /*校验成功*/
+}
+
+func VerifyCrc32(actual []byte, expectedCrc32 uint32) error {
+	actualCrc32 := crc32.Checksum(actual, CastageoliCrcTable)
+	if actualCrc32 == expectedCrc32 {
+		return nil
+	}
+	return errors.New("Verify Crc32 Failed")
 }
 
 func CalculateChecksum(b []byte) uint64 {
@@ -54,8 +63,8 @@ func OpenDir(dir string) (*os.File, error) {
 }
 
 func FileNameSSTable(dir string, id uint64) string {
-	return filepath.Join(dir, fmt.Sprintf("%5d.%s", id, FileSuffixNameSSTable))
+	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameSSTable))
 }
 func FiNameWalLog(dir string, id uint64) string {
-	return filepath.Join(dir, fmt.Sprintf("%5d.%s", id, FileSuffixNameWalLog))
+	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameWalLog))
 }

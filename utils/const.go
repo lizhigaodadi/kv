@@ -25,6 +25,6 @@ const (
 
 /*文件拓展名相关的常量*/
 const (
-	FileSuffixNameSSTable = "sst"
-	FileSuffixNameWalLog  = "wal"
+	FileSuffixNameSSTable = ".sst"
+	FileSuffixNameWalLog  = ".wal"
 )

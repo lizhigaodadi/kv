@@ -27,6 +27,7 @@ type TableBuilder struct {
 }
 
 type Options struct {
+	workDir                  string
 	maxSSTableSize           uint64
 	BlockSize                uint64 /*表示我们这个Builder的Block序列化后的最大大小*/
 	BloomFilterFalsePositive float64
