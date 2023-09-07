@@ -54,25 +54,28 @@ func FIleInMemoryInit() *fileInMemory {
 	return fim
 }
 
+func FIleInMemoryInitWithoutAppend() *fileInMemory {
+	fim, err := newFileInMemory("./00001.wal", utils.DefaultOpenFileFlag)
+	if err != nil {
+		fmt.Printf("newFileInMemory errors: %s", err)
+	}
+	return fim
+}
+
 func TestFileInMemory_AllocateSlice(t *testing.T) {
-	fim := FIleInMemoryInit()
+	fim := FIleInMemoryInitWithoutAppend()
 	str := "\n--------------------------Test Buffer------------------------------------\n"
 	size := len(str)
-	err := fim.Truncate(100)
-	if err != nil {
-		panic(err)
-	}
-	slice, err := fim.AllocateSlice(size, 20000)
+	slice, err := fim.AllocateSlice(size, 200)
 	if err != nil {
 		panic(err)
 	}
 	buf := []byte(str)
 	assert.Equal(t, copy(slice, buf), size)
 
-	bytes := fim.Slice(20000)
+	bytes := fim.Slice(200)
 	s := string(bytes)
-	fmt.Printf("len: %d str: %s", len(s), s)
-
+	assert.Equal(t, s, str)
 	fim.Sync()
 }
 
@@ -83,7 +86,7 @@ func TestFileInMemory_Delete(t *testing.T) {
 }
 
 func TestFileInMemory_AppendBuffer(t *testing.T) {
-	fim := FIleInMemoryInit()
+	fim := FIleInMemoryInitWithoutAppend()
 	str := "\n-----|fuck you every day|------This is a Test Module-----\n"
 	err := fim.AppendBuffer(400, []byte(str))
 	assert.Equal(t, err, nil)
@@ -91,4 +94,6 @@ func TestFileInMemory_AppendBuffer(t *testing.T) {
 	assert.Equal(t, err, nil)
 	s := string(bytes)
 	assert.Equal(t, s, str)
+
+	fim.Sync()
 }

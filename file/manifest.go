@@ -59,7 +59,7 @@ func OpenManifestFile(opt *Options) (*ManifestFile, error) {
 	/*打开文件而不创建文件通过这种方式判断是否是第一次创建*/
 	fp, err := os.OpenFile(fileName, os.O_RDWR, 0)
 	if err != nil {
-		if !os.IsNotExist(err) {
+		if os.IsNotExist(err) {
 			/*TODO:创建新的manifest文件*/
 			manifest, err := createManifest()
 			if err != nil {
@@ -83,12 +83,16 @@ func OpenManifestFile(opt *Options) (*ManifestFile, error) {
 			return nil, err
 		}
 	}
-
+	mf, err := createManifest()
+	if err != nil {
+		return nil, err
+	}
 	manifestFile := &ManifestFile{
 		opt:                       opt,
 		f:                         fp,
 		lock:                      sync.RWMutex{},
 		deletionsRewriteThreshold: utils.DefaultDeletionsRewriteThreshold,
+		mf:                        mf,
 	}
 	/*TODO:从磁盘中加载我们的manifest文件信息出来*/
 	if err = manifestFile.loadManifest(); err != nil {
@@ -113,8 +117,9 @@ func helpRewrite(dir string, manifest *Manifest) (*os.File, int, error) {
 	rewriteFileName := filepath.Join(dir, utils.ManifestRewriteName)
 
 	/*创建新文件*/
-	fp, err := os.OpenFile(rewriteFileName, utils.DefaultFileAclMask, utils.DefaultFileAclMask)
+	fp, err := os.OpenFile(rewriteFileName, utils.DefaultOpenFileFlag, utils.DefaultFileAclMask)
 	if err != nil {
+		fmt.Printf("ErrorMessage : %s", err)
 		return nil, 0, err
 	}
 	/*读取原来的Manifest文件信息*/
@@ -124,19 +129,21 @@ func helpRewrite(dir string, manifest *Manifest) (*os.File, int, error) {
 
 	/*将其序列化加入到文件中*/
 	netCreations := len(manifest.Tables)
-	manifestChangeSet := manifest.asManifestChangeSet()
-	manifestBuf, err := proto.Marshal(manifestChangeSet)
-	if err != nil {
-		return nil, 0, err
+	if netCreations != 0 { /*根本不需要继续添加了*/
+		manifestChangeSet := manifest.asManifestChangeSet()
+		manifestBuf, err := proto.Marshal(manifestChangeSet)
+		if err != nil {
+			return nil, 0, err
+		}
+		var lenCrcBuf [8]byte
+		binary.BigEndian.PutUint32(lenCrcBuf[0:4], uint32(len(manifestBuf)))
+		/*计算校验和*/
+		checksum := utils.CalculateChecksum(manifestBuf)
+		binary.BigEndian.PutUint32(lenCrcBuf[4:8], uint32(checksum))
+		/*之前的manifest buffer 块加入到新的buffer中*/
+		buf = append(buf, lenCrcBuf[:]...) /*因为lenCrcBuf是数组，我们必须先将其转化为切片*/
+		buf = append(buf, manifestBuf...)
 	}
-	var lenCrcBuf [8]byte
-	binary.BigEndian.PutUint32(lenCrcBuf[0:4], uint32(len(manifestBuf)))
-	/*计算校验和*/
-	checksum := utils.CalculateChecksum(manifestBuf)
-	binary.BigEndian.PutUint32(lenCrcBuf[4:8], uint32(checksum))
-	/*之前的manifest buffer 块加入到新的buffer中*/
-	buf = append(buf, lenCrcBuf[:]...) /*因为lenCrcBuf是数组，我们必须先将其转化为切片*/
-	buf = append(buf, manifestBuf...)
 
 	/*将数据写入刷新到磁盘中*/
 	if _, err := fp.Write(buf); err != nil {
@@ -211,14 +218,14 @@ func (mf *ManifestFile) loadManifest() error {
 	reader := &manifestReader{bufReader: bufio.NewReader(fp)}
 	var magicBuf [8]byte
 	n, err := io.ReadFull(reader, magicBuf[:])
-	utils.CondPanic(n == utils.MagicLen, errors.New("Invalid magic Length"))
+	utils.CondPanic(n != utils.MagicLen, errors.New("Invalid magic Length"))
 	if err != nil {
 		return err
 	}
 	/*开始校验信息*/
 	magicText := binary.BigEndian.Uint32(magicBuf[0:4])
 	magicVersion := binary.BigEndian.Uint32(magicBuf[4:8])
-	utils.CondPanic(magicText == utils.MagicText && magicVersion == utils.MagicVersion,
+	utils.CondPanic(magicText != utils.MagicText || magicVersion != utils.MagicVersion,
 		errors.New("Invalid magic"))
 	offset += 8
 	for {
@@ -230,6 +237,9 @@ func (mf *ManifestFile) loadManifest() error {
 			return err
 		}
 		bufLen := binary.BigEndian.Uint32(crcLenBuf[0:4])
+		if bufLen == 0 {
+			break /*不需要再继续了*/
+		}
 		offset += 8
 		buf := make([]byte, bufLen)
 		if _, err := io.ReadFull(reader, buf); err != nil {
@@ -244,8 +254,13 @@ func (mf *ManifestFile) loadManifest() error {
 		if err := proto.Unmarshal(buf, changeSet); err != nil {
 			return err
 		}
-		offset += bufLen
+		err := mf.AddChanges(changeSet.Changes)
+		if err != nil {
+			return err
+		}
+		/*计算changeSet的长度*/
 
+		offset += bufLen
 	}
 
 	/*在此处进行一次切割*/
@@ -275,7 +290,7 @@ func (mf *Manifest) applyChange(change *pb.ManifestChange) error {
 				CheckSum: change.Checksum,
 			}
 			/*判断一下Levels是否超出高度*/
-			for len(mf.level) >= int(change.Level) {
+			for len(mf.level) <= int(change.Level) {
 				mf.level = append(mf.level, levelManifest{Tables: make(map[uint64]struct{})})
 			}
 			mf.level[change.Level].Tables[change.Id] = struct{}{}

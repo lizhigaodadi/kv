@@ -207,7 +207,7 @@ func (fim *fileInMemory) Sync() error {
 			if err != nil {
 				return err
 			}
-			written = n
+			written += n
 			break
 		}
 
@@ -217,11 +217,12 @@ func (fim *fileInMemory) Sync() error {
 		}
 		written += writeGap
 	}
-	err = fim.fd.Sync()
+
+	err = fim.fd.Truncate(int64(written)) /*保证没有多余的数据被写入*/
 	if err != nil {
 		return err
 	}
-	err = fim.fd.Truncate(int64(written)) /*保证没有多余的数据被写入*/
+	err = fim.fd.Sync()
 	if err != nil {
 		return err
 	}

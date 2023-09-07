@@ -25,7 +25,12 @@ func CompareKeys(key1, key2 []byte) int {
 
 func VerifyCheckSum(actual []byte, expected []byte) error {
 	actualCheckSum := uint64(crc32.Checksum(actual, CastageoliCrcTable))
-	expectedCheckSum := ByteToU64(expected)
+	var expectedCheckSum uint64
+	if len(expected) == 8 {
+		expectedCheckSum = BytesToU64(expected)
+	} else {
+		expectedCheckSum = uint64(BytesToU32(expected))
+	}
 
 	if actualCheckSum != expectedCheckSum {
 		return errors.New("Verify CheckSum Failed")
