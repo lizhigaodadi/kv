@@ -63,9 +63,9 @@ func LoadFileToMemory(fd *os.File, DataSize int) (*fileInMemory, error) {
 	return fim, nil
 }
 
-func newFileInMemory(fileName string, flag int) (*fileInMemory, error) {
+func NewFileInMemory(fileName string) (*fileInMemory, error) {
 	/*创建一个新的文件*/
-	fd, err := os.OpenFile(fileName, flag, 0666)
+	fd, err := os.OpenFile(fileName, utils.DefaultOpenFileFlag, 0666)
 	if err != nil {
 		log.Fatalf("create file %s failed", fileName)
 	}

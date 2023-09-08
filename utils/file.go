@@ -70,6 +70,6 @@ func OpenDir(dir string) (*os.File, error) {
 func FileNameSSTable(dir string, id uint64) string {
 	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameSSTable))
 }
-func FiNameWalLog(dir string, id uint64) string {
+func FileNameWalLog(dir string, id uint64) string {
 	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameWalLog))
 }

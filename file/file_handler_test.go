@@ -3,12 +3,11 @@ package file
 import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
-	"kv/utils"
 	"testing"
 )
 
 func TestFileInMemory_NewFileInMemoryReader(t *testing.T) {
-	fim, err := newFileInMemory("./00001.wal", utils.DefaultOpenFileFlag)
+	fim, err := NewFileInMemory("./00001.wal")
 	if err != nil {
 		fmt.Printf("newFileInMemory errors: %s", err)
 	}
@@ -17,7 +16,7 @@ func TestFileInMemory_NewFileInMemoryReader(t *testing.T) {
 }
 
 func TestFileInMemory_Append(t *testing.T) {
-	fim, err := newFileInMemory("./00001.wal", utils.DefaultOpenFileFlag)
+	fim, err := NewFileInMemory("./00001.wal")
 	if err != nil {
 		fmt.Printf("newFileInMemory errors: %s", err)
 	}
@@ -31,7 +30,7 @@ func TestFileInMemory_Append(t *testing.T) {
 }
 
 func TestFileInMemory_Sync(t *testing.T) {
-	fim, err := newFileInMemory("./00001.wal", utils.DefaultOpenFileFlag)
+	fim, err := NewFileInMemory("./00001.wal")
 	if err != nil {
 		fmt.Printf("newFileInMemory errors: %s", err)
 	}
@@ -39,7 +38,7 @@ func TestFileInMemory_Sync(t *testing.T) {
 }
 
 func FIleInMemoryInit() *fileInMemory {
-	fim, err := newFileInMemory("./00001.wal", utils.DefaultOpenFileFlag)
+	fim, err := NewFileInMemory("./00001.wal")
 	if err != nil {
 		fmt.Printf("newFileInMemory errors: %s", err)
 	}
@@ -55,7 +54,7 @@ func FIleInMemoryInit() *fileInMemory {
 }
 
 func FIleInMemoryInitWithoutAppend() *fileInMemory {
-	fim, err := newFileInMemory("./00001.wal", utils.DefaultOpenFileFlag)
+	fim, err := NewFileInMemory("./00001.wal")
 	if err != nil {
 		fmt.Printf("newFileInMemory errors: %s", err)
 	}

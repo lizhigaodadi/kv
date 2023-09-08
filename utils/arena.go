@@ -130,3 +130,8 @@ func (arena *Arena) getVal(valOffset uint32, valSize uint32) (ret ValueStruct) {
 
 	return
 }
+
+/*返回已经占用的内存大小*/
+func (a *Arena) Size() uint32 {
+	return atomic.LoadUint32(&a.n)
+}

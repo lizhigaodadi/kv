@@ -203,6 +203,10 @@ func (s *SkipList) Draw(align bool) {
 
 }
 
+func (s *SkipList) MemSize() uint32 {
+	return s.arena.Size()
+}
+
 func (s *SkipList) Search(key []byte) ValueStruct {
 	node, _ := s.findNear(key, false, true)
 
@@ -482,7 +486,7 @@ func (s *SkipList) Get(key []byte) ValueStruct {
 
 	nextKey := s.arena.getKey(n.keyOffset, n.keySize)
 	/*判断是否相等*/
-	if !SameKey(key, nextKey) { /*我们没能找到了节点*/
+	if !SameKey(key, nextKey) { /*我们没能找了节点*/
 		return ValueStruct{}
 	}
 

@@ -6,6 +6,7 @@ import (
 	"github.com/pkg/errors"
 	"hash/crc32"
 	"kv/utils"
+	"os"
 	"sync"
 )
 
@@ -13,28 +14,46 @@ const (
 	headPrevLen = 12
 )
 
-type walFile struct {
+type WalFile struct {
 	opt     *Options
 	fim     *fileInMemory /*自己封装的一个伪mmap对象*/
 	rwLock  sync.RWMutex
 	writeAt uint32
 }
 
-type walHeader struct {
+type WalHeader struct {
 	key       []byte
 	val       []byte
 	expiresAt uint64
 }
 
-func newWalHeader(key []byte, val []byte, expiresAt uint64) *walHeader {
-	return &walHeader{
+func newWalHeader(key []byte, val []byte, expiresAt uint64) *WalHeader {
+	return &WalHeader{
 		key:       key,
 		val:       val,
 		expiresAt: expiresAt,
 	}
 }
 
-func (wh *walHeader) encode() ([]byte, int) {
+/*请确保该WalFile已经存在了*/
+func OpenWalFile(option *Options) (*WalFile, error) {
+	/*打开加载这个文件文件*/
+	fim, err := NewFileInMemory(option.FileName)
+	if err != nil {
+		return nil, err
+	}
+	fileInfo, err := os.Stat(option.FileName)
+	writeAt := fileInfo.Size()
+
+	return &WalFile{
+		opt:     option,
+		fim:     fim,
+		rwLock:  sync.RWMutex{},
+		writeAt: uint32(writeAt),
+	}, nil
+}
+
+func (wh *WalHeader) encode() ([]byte, int) {
 	var written int
 	/*将数据写入到字节数组中*/
 	size := wh.encodeSize()
@@ -61,14 +80,14 @@ func (wh *walHeader) encode() ([]byte, int) {
 	return buf, written
 }
 
-func (wh *walHeader) encodeSize() int {
+func (wh *WalHeader) encodeSize() int {
 	return 4 /*keyLen*/ + 4 /*valLen*/ + 4 /*expiresAt*/ + len(wh.key) + len(wh.val) + 4 /*crc校验和*/
 }
 
 /*追加写入*/
-func (wf *walFile) Write(entry *utils.Entry) error {
+func (wf *WalFile) Write(entry *utils.Entry) error {
 	/*追加写入*/
-	header := &walHeader{
+	header := &WalHeader{
 		key:       entry.Key,
 		val:       entry.Value,
 		expiresAt: entry.ExpireAt,
@@ -76,6 +95,8 @@ func (wf *walFile) Write(entry *utils.Entry) error {
 
 	buf, _ := header.encode()
 	err := wf.fim.AppendBuffer(wf.writeAt, buf)
+	n := uint32(len(buf))
+	wf.writeAt += n
 	if err != nil {
 		return err
 	}
@@ -83,7 +104,7 @@ func (wf *walFile) Write(entry *utils.Entry) error {
 	return nil
 }
 
-func (wf *walFile) ReadEntry(offset uint32) (*utils.Entry, int, error) {
+func (wf *WalFile) ReadEntry(offset uint32) (*utils.Entry, int, error) {
 	/*从映射中读取一个entry*/
 	readAt := int(offset)
 	if int(offset)+headPrevLen > wf.Size() {
@@ -130,12 +151,12 @@ func (wf *walFile) ReadEntry(offset uint32) (*utils.Entry, int, error) {
 	}, int(offset) + headPrevLen + int(keyLen+valueLen) + 4, nil
 }
 
-func (wf *walFile) Truncate(size int) error {
+func (wf *WalFile) Truncate(size int) error {
 	return wf.fim.Truncate(size)
 }
 
-func (wf *walFile) Iterate(readOnly bool, fn utils.EntryHandle) error {
-	/*TODO:通过readOnly来判断加什么锁遍历整个walFile并执行相应的fn方法*/
+func (wf *WalFile) Iterate(readOnly bool, fn utils.EntryHandle) (int, error) {
+	/*TODO:通过readOnly来判断加什么锁遍历整个WalFile并执行相应的fn方法*/
 	var written int
 	wf.lock(readOnly)
 	defer wf.unlock(readOnly)
@@ -146,17 +167,17 @@ func (wf *walFile) Iterate(readOnly bool, fn utils.EntryHandle) error {
 		}
 		written += n
 		if err = fn(entry); err != nil { /*这个是真的出了error*/
-			return nil
+			return 0, err
 		}
 	}
-	return nil
+	return written, nil
 }
 
-func (wf *walFile) Size() int {
+func (wf *WalFile) Size() int {
 	return wf.fim.DataSize
 }
 
-func (wf *walFile) lock(readOnly bool) {
+func (wf *WalFile) lock(readOnly bool) {
 	if readOnly {
 		wf.rwLock.RLock()
 	} else {
@@ -164,7 +185,11 @@ func (wf *walFile) lock(readOnly bool) {
 	}
 }
 
-func (wf *walFile) unlock(readOnly bool) {
+func (wf *WalFile) Name() string {
+	return wf.opt.FileName
+}
+
+func (wf *WalFile) unlock(readOnly bool) {
 	if readOnly {
 		wf.rwLock.RUnlock()
 	} else {
@@ -172,14 +197,14 @@ func (wf *walFile) unlock(readOnly bool) {
 	}
 }
 
-func (wf *walFile) Fid() uint64 {
+func (wf *WalFile) Fid() uint64 {
 	return wf.opt.FID
 }
-func (wf *walFile) Sync() error {
+func (wf *WalFile) Sync() error {
 	return wf.fim.Sync()
 }
 
-func (wf *walFile) Close() error {
+func (wf *WalFile) Close() error {
 	if err := wf.fim.Sync(); err != nil {
 		return err
 	}
