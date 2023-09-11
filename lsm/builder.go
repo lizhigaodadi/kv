@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
+	"io"
+	"kv/file"
 	"kv/pb"
 	"kv/utils"
 	"kv/utils/cache"
 	"log"
 	"math"
+	"path/filepath"
 	"unsafe"
 )
 
@@ -31,6 +34,9 @@ type Options struct {
 	maxSSTableSize           uint64
 	BlockSize                uint64 /*表示我们这个Builder的Block序列化后的最大大小*/
 	BloomFilterFalsePositive float64
+	LevelSizeMultiplier      int /*相邻level之间期望的size比例*/
+	BaseLevelSize            int /*最底层的level大小*/
+	BotLevelCount            int /*0层Level Table的数量*/
 }
 
 type Block struct {
@@ -279,8 +285,31 @@ func (tb *TableBuilder) WriteOffsets() []*pb.BlockOffset {
 }
 
 /*TODO: 写入ssTable*/
-func (tb *TableBuilder) Flush() {
+func (tb *TableBuilder) Flush(lm *levelManager, tableName string) (*Table, error) {
+	bd := tb.Done()
 
+	/*创建或者打开一个新的SSTable文件，要被重新刷入*/
+	t := OpenTable(&file.Options{
+		FID:      utils.FID(tableName),
+		FileName: tableName,
+		Dir:      filepath.Dir(tableName),
+	})
+
+	/*将buildData中的数据刷入磁盘当中*/
+	bytes, err := t.Bytes(bd.size, 0)
+	if err != nil {
+		return nil, err
+	}
+	/*开始直接复制*/
+	bd.Copy(bytes)
+
+	/*现在刷盘就可以了*/
+	if err = t.Sync(); err != nil {
+		return nil, err
+	}
+	t.lm = lm
+
+	return t, nil
 }
 
 /*将整个ssttable序列化*/
@@ -297,4 +326,146 @@ func (tb *BuilderData) Copy(dst []byte) int {
 	written += copy(dst[written:], utils.U32ToBytes(uint32(len(tb.checkSum))))
 
 	return written
+}
+
+/*Block的迭代器实现部分*/
+
+type BlockIterator struct {
+	idx         int    /*实际上的指向了当前的entry的起始偏移量*/
+	err         error  /*迭代器遇到的一些异常问题*/
+	data        []byte /*实际存储的kv_data区域*/
+	blockId     int
+	entryOffset []uint32
+	baseKey     []byte
+	block       *Block /*原本的block块*/
+}
+
+func NewBlockIterator(block *Block, bId int) *BlockIterator {
+	bi := &BlockIterator{
+		blockId:     bId,
+		idx:         -1, /*-1 代表着目前是一个失效的迭代器*/
+		baseKey:     block.baseKey,
+		entryOffset: block.entryOffsets,
+		block:       block,
+	}
+
+	return bi
+}
+
+func (bi *BlockIterator) Rewind() {
+	/*判断一下迭代器是否可用*/
+	if bi.Valid() {
+		return
+	}
+	bi.idx = 0
+}
+
+func (bi *BlockIterator) Valid() bool {
+	return bi.idx >= 0 && bi.idx < len(bi.entryOffset)
+}
+
+func (bi *BlockIterator) Next() { /*读取倒下一个*/
+	if bi.Valid() {
+		log.Printf("BlockIterator Invalid")
+		return
+	}
+
+	/*判断一下是否到了最后*/
+	if bi.idx == len(bi.entryOffset)-1 { /*已经是最后一个位置了*/
+		log.Printf("BlockIterator Has No Next")
+		bi.err = io.EOF
+	}
+
+	/*移动指针*/
+	bi.idx++
+}
+
+/*返回当前迭代器元素*/
+func (bi *BlockIterator) Item() utils.Item {
+	/*获取下一个元素的偏移量*/
+	var endEntryOffset uint32
+	if bi.idx == len(bi.entryOffset)-1 { /*这是最后一个元素了*/
+		endEntryOffset = uint32(len(bi.data))
+	} else {
+		endEntryOffset = bi.entryOffset[bi.idx+1]
+	}
+	startEntryOffset := bi.entryOffset[bi.idx]
+
+	/*从缓冲区中读取数据出来,该缓冲区必要时需要替换为mmap映射的部分*/
+	buf := bi.data[startEntryOffset : startEntryOffset+endEntryOffset]
+	header := &Header{}
+	header.Decode(buf[0:headerSize]) /*TODO: headerSize目前大小需要重新测试一下*/
+	/*判断一下是否需要basekey*/
+	/*读取后续的diffKey*/
+	diffKey := buf[headerSize : headerSize+header.diff]
+
+	/*创建一个ValueStruct来解编码*/
+	vs := &utils.ValueStruct{}
+	vs.DecodeValue(buf[headerSize+header.diff:])
+	/*构建Item*/
+	/*计算Key*/
+	var key []byte
+	if len(bi.baseKey) > 0 {
+		key = append(bi.baseKey[:header.Overlap], diffKey...)
+	} else {
+		key = diffKey
+	}
+
+	/**/
+	item := &Item{
+		e: &utils.Entry{
+			Key:      key,
+			Value:    vs.Value,
+			ExpireAt: vs.ExpiresAt,
+		},
+	}
+	return item
+}
+
+func (bi *BlockIterator) HasNext() bool {
+	return bi.idx == len(bi.entryOffset)-1
+}
+
+func (bi *BlockIterator) Seek(key []byte) {
+	/*TODO: 目前还未确定是否需要这个*/
+	lastIdx := bi.idx
+	bi.Rewind()
+	/*这里进行一个二分查找*/
+	left := 0
+	right := len(bi.data)
+	for left < right {
+		mid := left + right
+
+		/*判断一下是大还是小了*/
+		e := bi.getItem(mid).Entry()
+		cmp := utils.CompareKeys(e.Key, key)
+		if cmp < 0 {
+			left = mid + 1
+		} else if cmp > 0 {
+			right = mid - 1
+		} else { /*找到了*/
+
+		}
+		/**/
+	}
+}
+
+func (bi *BlockIterator) getItem(idx int) utils.Item {
+	/*TODO:这一部分之后再来决定是否需要*/
+	/*判断一下是否超出了大小*/
+	lastIdx := bi.idx
+	bi.idx = idx
+	defer func() {
+		bi.idx = lastIdx
+	}()
+	if !bi.Valid() {
+		bi.idx = lastIdx
+		return &Item{}
+	}
+	item := bi.Item()
+	return item
+}
+
+func (bi *BlockIterator) Close() {
+	/*TODO：关闭该文件,目前来看这个方法并不需要存在*/
 }

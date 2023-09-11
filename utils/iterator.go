@@ -9,6 +9,7 @@ type Iterator interface {
 	Seek(key []byte)
 }
 
+/*接口都默认为指针实现*/
 type Item interface {
 	Entry() *Entry
 }

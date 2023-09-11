@@ -136,6 +136,8 @@ func (fim *fileInMemory) AppendBuffer(offset uint32, buf []byte) error {
 }
 
 func (fim *fileInMemory) Close() {
+	/*将模拟映射的byte数组也要删除掉不然会造成oom*/
+	fim.Data = nil
 	fim.fd.Close()
 }
 
@@ -144,11 +146,26 @@ func (fim *fileInMemory) NewReader() io.Reader {
 }
 func (fim *fileInMemory) Bytes(sz, offset int) ([]byte, error) {
 	needSize := sz + offset
-	if needSize > fim.DataSize {
-		/*超出预期了*/
-		return nil, fmt.Errorf("over buffer size")
+	if needSize > cap(fim.Data) {
+		/*TODO:待测*/
+		growBy := cap(fim.Data)
+		if growBy > oneGB {
+			growBy = oneGB
+		}
+		if cap(fim.Data)+growBy < needSize {
+			growBy = needSize - cap(fim.Data)
+		}
+		newBuf := make([]byte, cap(fim.Data)+growBy)
+		utils.CondPanic(copy(newBuf, fim.Data[0:fim.DataSize]) == fim.DataSize,
+			errors.New("Copy Failed!"))
+		fim.Data = newBuf
 	}
 
+	/*更新实际的有效长度*/
+	if needSize > fim.DataSize {
+		fim.DataSize = needSize
+	}
+	/*开始映射*/
 	return fim.Data[offset : offset+sz], nil
 }
 

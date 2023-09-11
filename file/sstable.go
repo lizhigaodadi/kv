@@ -6,7 +6,6 @@ import (
 	"kv/pb"
 	"kv/utils"
 	"log"
-	"os"
 	"sync"
 	"syscall"
 	"time"
@@ -27,11 +26,15 @@ type SSTable struct {
 }
 
 func OpenSStable(opt *Options) *SSTable {
-	fim, err := newFileInMemory(opt.FileName, os.O_RDWR|os.O_CREATE)
+	fim, err := NewFileInMemory(opt.FileName)
 	if err != nil {
 		log.Fatal(err)
 	}
 	return &SSTable{fim: fim, fid: opt.FID, lock: &sync.RWMutex{}}
+}
+
+func (ss *SSTable) Size() uint32 {
+	return uint32(ss.fim.DataSize)
 }
 
 func (ss *SSTable) Init() error {
@@ -111,6 +114,9 @@ func (ss *SSTable) SetMaxKey(maxKey []byte) {
 func (ss *SSTable) MinKey() []byte {
 	return ss.minKey
 }
+func (ss *SSTable) MaxKey() []byte {
+	return ss.maxKey
+}
 func (ss *SSTable) SetMinKey(minKey []byte) {
 	ss.minKey = minKey
 }
@@ -140,4 +146,13 @@ func (ss *SSTable) Truncate(size uint64) error {
 }
 func (ss *SSTable) Delete() error {
 	return ss.fim.Delete()
+}
+
+/*映射切片返回*/
+func (ss *SSTable) Bytes(sz, offset int) ([]byte, error) {
+	return ss.fim.Bytes(sz, offset)
+}
+
+func (ss *SSTable) Sync() error {
+	return ss.fim.Sync()
 }

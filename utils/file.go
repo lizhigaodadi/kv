@@ -6,7 +6,10 @@ import (
 	"github.com/pkg/errors"
 	"hash/crc32"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 func CompareKeys(key1, key2 []byte) int {
@@ -72,4 +75,20 @@ func FileNameSSTable(dir string, id uint64) string {
 }
 func FileNameWalLog(dir string, id uint64) string {
 	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameWalLog))
+}
+
+func FID(name string) uint64 {
+	name = path.Base(name) /*删除路径*/
+	if !strings.HasSuffix(name, ".sst") {
+		return 0 /*根本不是sst文件，无效操作*/
+	}
+	/*删除后缀名*/
+	name = strings.TrimSuffix(name, ".sst")
+	/*转化为普通的id*/
+	id, err := strconv.Atoi(name)
+	if err != nil {
+		Err(err)
+		return 0
+	}
+	return uint64(id)
 }

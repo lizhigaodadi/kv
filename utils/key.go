@@ -2,6 +2,7 @@ package utils
 
 import (
 	"encoding/binary"
+	"errors"
 	"math"
 )
 
@@ -17,4 +18,12 @@ func ParseTs(key []byte) uint64 {
 	}
 
 	return math.MaxUint64 - binary.BigEndian.Uint64(key[len(key)-8:])
+}
+
+func KeyWithTs(key []byte, ts uint64) []byte {
+	size := len(key) + 8 //实际需要的长度大小
+	buf := make([]byte, size)
+	CondPanic(copy(buf[0:len(key)], key) != len(key), errors.New("Copy Error"))
+	binary.BigEndian.PutUint64(buf[len(key):], math.MaxUint64-ts)1
+	return buf
 }
