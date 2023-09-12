@@ -37,12 +37,18 @@ func (lm *levelManager) lastLevel() *levelHandler {
 }
 
 func (lm *levelManager) levelHeight() int {
+	if lm.handlers == nil {
+		return 0
+	}
 	return len(lm.handlers)
+}
+
+func (lm *levelManager) isLastLevel(level int) bool {
+	return len(lm.handlers)-1 == level
 }
 
 func PrevPullDBMessage() {
 	/*TODO:预读取数据库信息*/
-
 }
 
 func NewLevelManager() *levelManager {

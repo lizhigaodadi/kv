@@ -28,7 +28,7 @@ type TableIterator struct {
 
 func NewTableIterator(t *Table) *TableIterator {
 	/*TODO:暂时不要进行初始化，因为可能会导致初始化过多的oom*/
-
+	return nil
 }
 
 func (ti *TableIterator) Next() { /*移动到下一个位置*/
@@ -123,16 +123,16 @@ func (mi *MergeIterator) Next() {
 	mi.fix()
 }
 
-func (mi *MergeIterator) Item() Item {
+func (mi *MergeIterator) Item() utils.Item {
 	/*获取到当前的item元素*/
 	/*判断一下是否有效*/
 	if mi.small != nil && mi.small.valid {
-		return Item{
+		return &Item{
 			e: mi.small.e,
 		}
 	}
 
-	return Item{
+	return &Item{
 		e: nil,
 	}
 }
@@ -176,4 +176,28 @@ func (mi *MergeIterator) Close() {
 	if mi.right.valid {
 		mi.right.iter.Close()
 	}
+}
+
+func NewNode(i utils.Iterator) *node {
+	n := &node{}
+	mi, ok := i.(*MergeIterator)
+	if ok {
+		n.mergeIter = mi
+	}
+	/*TODO:这里可能还有其他的一些种类的迭代器需要被补充*/
+	return n
+}
+
+func NewMergeIterator() *MergeIterator {
+
+	return nil
+}
+
+func (mi *MergeIterator) Valid() bool {
+	/*TODO:判断一下当前迭代器是否可以继续工作*/
+	return false
+}
+
+func (mi *MergeIterator) Seek(key []byte) {
+	/*TODO:对于这个方法暂时不确定如何实现比较合适，先用于兼容接口作用*/
 }

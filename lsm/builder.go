@@ -39,6 +39,7 @@ type Options struct {
 	BaseLevelSize            int /*最底层的level大小*/
 	BaseTableSize            int
 	BotLevelTableCount       int /*0层Level Table的数量*/
+	//CompactMinSize           int /*压缩至少了达到这个标准才会进行压缩*/
 }
 
 type Block struct {

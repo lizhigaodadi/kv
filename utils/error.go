@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"github.com/pkg/errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -11,6 +12,14 @@ import (
 
 var (
 	gopath = filepath.Join(os.Getenv("GOPATH"), "src") + "/"
+)
+
+var (
+	TablesNotFoundErr = errors.New("Tables not fit")
+	TablesNotInitErr  = errors.New("Table not init")
+	KeyFormatErr      = errors.New("Key format not match")
+	TableCompactErr   = errors.New("Table Compact failed")
+	TopTablesPullErr  = errors.New("Top Tables Pull failed")
 )
 
 func CondPanic(condition bool, e error) {
