@@ -35,8 +35,10 @@ type Options struct {
 	BlockSize                uint64 /*表示我们这个Builder的Block序列化后的最大大小*/
 	BloomFilterFalsePositive float64
 	LevelSizeMultiplier      int /*相邻level之间期望的size比例*/
+	TableSizeMultiplier      int
 	BaseLevelSize            int /*最底层的level大小*/
-	BotLevelCount            int /*0层Level Table的数量*/
+	BaseTableSize            int
+	BotLevelTableCount       int /*0层Level Table的数量*/
 }
 
 type Block struct {
