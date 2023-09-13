@@ -6,6 +6,7 @@ import (
 	"kv/utils"
 	"kv/utils/cache"
 	"sort"
+	"sync/atomic"
 )
 
 type levelManager struct {
@@ -52,7 +53,7 @@ func PrevPullDBMessage() {
 }
 
 func NewLevelManager() *levelManager {
-	/*创建一个LevelManager*/
+	/*TODO:创建一个LevelManager*/
 	return nil
 }
 
@@ -198,4 +199,8 @@ func (lh *levelHandler) getRealSize() uint32 {
 		}
 		return levelSize
 	}
+}
+
+func (lm *levelManager) GetNewFid() uint64 {
+	return atomic.AddUint64(&lm.maxFID, 1)
 }

@@ -152,18 +152,47 @@ func (lm *levelManager) compactL0ToBaseLevel(cd *CompactDef) bool {
 	}
 
 	/*基础信息已经收集足够了现在开始真正的压缩*/
-	err = cd.compact()
+	err = lm.compact(cd)
 	if err != nil {
 		return false
 	}
 	return false
 }
 
-func (cd *CompactDef) compact() error {
+func (lm *levelManager) compact(cd *CompactDef) error {
 	/*开始真正执行压缩流程，生成迭代器树*/
 	ct := append(cd.bot, cd.top...)
+	i := buildMergeIterators(ct)
+	mi, ok := i.(*MergeIterator)
+	if !ok {
+		return utils.BuildMergeIterErr
+	}
 
+	/*生成相应的TableBuilder*/
+	builder := NewTableBuilder(lm.opt)
+
+	for mi.Valid() {
+		e := mi.Item().Entry()
+		/*判断一下是否可用*/
+		if isSkip(e, mi.LastKey()) {
+			mi.Next() /*因为Next会修改LastKey的值所以必须在LastKey()之后执行*/
+			continue
+		}
+		mi.Next()
+		builder.Add(e)
+	}
+
+	/*获取新的tableName*/
+	fid := lm.GetNewFid()
+	_, err := builder.Flush(lm, utils.FileNameSSTable(lm.opt.workDir, fid)) /*TODO:tables有什么作用，等下回来看看*/
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func isSkip(thisE *utils.Entry, lastKey []byte) bool {
+	return bytes.Equal(utils.ParseKey(thisE.Key), utils.ParseKey(lastKey))
 }
 
 /*填充这个执行计划的NextLevel所锁定的tables*/
@@ -362,14 +391,62 @@ func (kr *KeyRange) isEqual(dkr *KeyRange) bool {
 	return bytes.Equal(kr.left, dkr.left) && bytes.Equal(kr.right, dkr.right)
 }
 
-/*TODO:递归构建一个二叉树形成的tableMergeIterators集合*/
-func buildMergeIterators(tables ...*Table) *MergeIterator {
-	/*先创建当前节点*/
-	l := len(tables)
-	if l == 0 { /*终止条件*/
-		return nil
+/*TODO:通过迭代的方式构建一个二叉树形成的tableMergeIterators集合*/
+func buildMergeIterators(tables []*Table) utils.Iterator {
+	/*获取我们需要的非叶子节点数量*/
+	MergeCount := GetMergeIteratorCount(len(tables))
+	nodes := make([]*node, 0)
+	node := &node{
+		valid: true,
 	}
-	l = l / 2 /*要被压缩的代码*/
+	if MergeCount > 0 {
+		node.addIterator(NewMergeIterator())
+	} else {
+		node.addIterator(NewTableIterator(tables[0])) /*TDOO:添加一个实际迭代数据的迭代器*/
+	}
+	/*通过迭代的方式二叉树*/
+	var j int
+	i := 1
+	for {
+		curNode := nodes[j]
+		/*创建节点*/
+		if i < MergeCount { /*创建MergeIterator*/
+			curNode.addIterator(NewMergeIterator()) /*创建mergeIterator会自动创建两个左右节点*/
+			nodes = append(nodes, &curNode.mergeIter.left)
+			if i+1 < MergeCount {
+				nodes = append(nodes, &curNode.mergeIter.right)
+			} else {
+				curNode.mergeIter.right.valid = false /*这是无用的*/
+				break
+			}
+		} else { /*创建普通的Iterator*/
+			curNode.addIterator(NewTableIterator(tables[i-MergeCount])) /*TDOO:添加一个实际迭代数据的迭代器*/
+		}
+		i += 2
+		j++
 
-	return nil
+	}
+	nodes[0].iter.Rewind() /*该方法可以调用fix()来修正*/
+
+	return nodes[0].iter
+}
+
+/*返回构建二叉树所需要的非叶子节点的数量*/
+func GetMergeIteratorCount(tc int) int {
+	//n := tc
+	//if tc <= 0 {
+	//	return 0
+	//}
+	//tc = tc | (tc >> 1)
+	//tc = tc | (tc >> 2)
+	//tc = tc | (tc >> 4)
+	//tc = tc | (tc >> 8)
+	//tc = tc | (tc >> 16)
+	//
+	//tc = (tc + 1) >> 2
+	var n int
+	if tc&1 == 1 {
+		n = 1
+	}
+	return (tc / 2) + n
 }

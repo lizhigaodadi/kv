@@ -15,11 +15,12 @@ var (
 )
 
 var (
-	TablesNotFoundErr = errors.New("Tables not fit")
-	TablesNotInitErr  = errors.New("Table not init")
-	KeyFormatErr      = errors.New("Key format not match")
-	TableCompactErr   = errors.New("Table Compact failed")
-	TopTablesPullErr  = errors.New("Top Tables Pull failed")
+	TablesNotFoundErr = errors.New("Tables Not Fit")
+	TablesNotInitErr  = errors.New("Table Not Init")
+	KeyFormatErr      = errors.New("Key Format Not Match")
+	TableCompactErr   = errors.New("Table Compact Failed")
+	TopTablesPullErr  = errors.New("Top Tables Pull Failed")
+	BuildMergeIterErr = errors.New("Build MergeIterator Failed")
 )
 
 func CondPanic(condition bool, e error) {

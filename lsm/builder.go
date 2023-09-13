@@ -431,7 +431,7 @@ func (bi *BlockIterator) HasNext() bool {
 
 func (bi *BlockIterator) Seek(key []byte) {
 	/*TODO: 目前还未确定是否需要这个*/
-	lastIdx := bi.idx
+	//lastIdx := bi.idx
 	bi.Rewind()
 	/*这里进行一个二分查找*/
 	left := 0

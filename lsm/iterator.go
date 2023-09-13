@@ -33,7 +33,7 @@ func NewTableIterator(t *Table) *TableIterator {
 
 func (ti *TableIterator) Next() { /*移动到下一个位置*/
 	/*判断迭代器是否生效*/
-	if !ti.valid() { /*迭代器失效了*/
+	if !ti.Valid() { /*迭代器失效了*/
 		log.Fatal("TableIterator Invalid")
 		return
 	}
@@ -52,7 +52,7 @@ func (ti *TableIterator) Next() { /*移动到下一个位置*/
 }
 
 func (ti *TableIterator) Item() utils.Item {
-	if !ti.valid() {
+	if !ti.Valid() {
 		return &Item{
 			e: nil,
 		}
@@ -60,7 +60,7 @@ func (ti *TableIterator) Item() utils.Item {
 	return ti.iters[ti.idx].Item()
 }
 
-func (ti *TableIterator) valid() bool {
+func (ti *TableIterator) Valid() bool {
 	if len(ti.iters) == 0 {
 		return false
 	}
@@ -100,6 +100,34 @@ type MergeIterator struct {
 	err     error /*因为要符合接口的规范，我们异常只能嵌入到迭代器中*/
 }
 
+type CompactIterator struct {
+	/*TODO:这是真正的存储数据的迭代器，支持多种不同迭代器*/
+	iter utils.Iterator
+	ti   *TableIterator /*三者中只有一个不为nil*/
+	li   *LevelIterator
+	bi   *BlockIterator
+}
+
+func NewCompactIterator(iter utils.Iterator) *CompactIterator {
+	ci := &CompactIterator{
+		iter: iter,
+	}
+	ti, ok := iter.(*TableIterator)
+	if ok {
+		ci.ti = ti
+	}
+	li, ok := iter.(*LevelIterator)
+	if ok {
+		ci.li = li
+	}
+	bi, ok := iter.(*BlockIterator)
+	if ok {
+		ci.bi = bi
+	}
+
+	return ci
+}
+
 type node struct {
 	valid     bool /*判断该节点是否有效*/
 	e         *utils.Entry
@@ -113,6 +141,7 @@ func (mi *MergeIterator) Next() {
 		mi.err = errors.New("Not Found")
 		return
 	}
+	mi.lastKey = mi.Item().Entry().Key /*更新一下上次使用的Key*/
 
 	if *mi.small == mi.right { /*右边执行*/
 		mi.right.iter.Next()
@@ -127,14 +156,30 @@ func (mi *MergeIterator) Item() utils.Item {
 	/*获取到当前的item元素*/
 	/*判断一下是否有效*/
 	if mi.small != nil && mi.small.valid {
-		return &Item{
-			e: mi.small.e,
-		}
+
+		//for mi.small.valid {
+		//	e := mi.small.e
+		//	/*判断一下这个entry是否失效了*/
+		//	lastKey := utils.ParseKey(mi.lastKey)
+		//	thisKey := utils.ParseKey(e.Key)
+		//	if bytes.Compare(lastKey, thisKey) == 0 {
+		//		mi.Next()
+		//	} else {
+		//		mi.lastKey = e.Key
+		//		return &Item{
+		//			e: e,
+		//		}
+		//	}
+		//}
 	}
 
 	return &Item{
 		e: nil,
 	}
+}
+
+func (mi *MergeIterator) LastKey() []byte {
+	return mi.lastKey
 }
 
 func (mi *MergeIterator) Rewind() {
@@ -188,9 +233,28 @@ func NewNode(i utils.Iterator) *node {
 	return n
 }
 
-func NewMergeIterator() *MergeIterator {
+func (n *node) addIterator(i utils.Iterator) {
+	/*判断一下这个是什么类型的迭代器*/
+	n.iter = i
+	mi, ok := i.(*MergeIterator)
+	if ok {
+		n.mergeIter = mi
+	}
+	ci, ok := i.(*MergeIterator)
+}
 
-	return nil
+/*并不设置左右节点*/
+func NewMergeIterator() *MergeIterator {
+	return &MergeIterator{
+		err:     nil,
+		lastKey: make([]byte, 0),
+		left: node{
+			valid: true,
+		},
+		right: node{
+			valid: true,
+		},
+	}
 }
 
 func (mi *MergeIterator) Valid() bool {
@@ -200,4 +264,66 @@ func (mi *MergeIterator) Valid() bool {
 
 func (mi *MergeIterator) Seek(key []byte) {
 	/*TODO:对于这个方法暂时不确定如何实现比较合适，先用于兼容接口作用*/
+}
+
+func (n *node) setKey() {
+	switch {
+	case n.mergeIter != nil: /*这只是单纯的一个传递数据的迭代器*/
+		n.valid = n.mergeIter.small.valid
+		if n.valid {
+			n.e = n.mergeIter.small.e
+		}
+		/*TODO:一些真正存储数据迭代器的逻辑以后继续补充*/
+	default:
+		n.valid = n.iter.Valid()
+		if n.valid {
+			n.e = n.iter.Item().Entry()
+		}
+
+	}
+}
+
+/*TODO:---------------------------以下方法后续完善-------------------------------*/
+func (li *LevelIterator) Next() {
+	/*判断一下当前还能走吗*/
+	if li.iters[li.idx].Valid() {
+		li.iters[li.idx].Next()
+	} else {
+		if li.idx < len(li.iters)-1 {
+			li.idx++
+			li.iters[li.idx].Rewind()
+		}
+	}
+}
+
+func (li *LevelIterator) Valid() bool {
+	/*看看自己是不是最后一个*/
+	if li.idx == len(li.iters)-1 {
+		return li.iters[li.idx].Valid()
+	} else { /*还没有到最后*/
+		return true
+	}
+}
+
+func (li *LevelIterator) Rewind() {
+	/*所有迭代器都Rewind*/
+	for _, iter := range li.iters {
+		iter.Rewind()
+	}
+	li.idx = 0
+}
+
+func (li *LevelIterator) Item() utils.Item {
+	e := li.iters[li.idx].Item()
+	return e
+}
+
+func (li *LevelIterator) Close() {
+	for _, iter := range li.iters {
+		iter.Close()
+	}
+}
+
+func (li *LevelIterator) Seek(key []byte) {
+	/*TODO:暂时没有头绪*/
 }
