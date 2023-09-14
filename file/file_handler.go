@@ -308,3 +308,9 @@ func (fimr *fileInMemoryReader) Read(p []byte) (int, error) {
 	return needSize, nil
 
 }
+
+func (fim *fileInMemory) CheckSum() []byte {
+	checkSum := make([]byte, 4)
+	binary.BigEndian.PutUint32(checkSum[0:4], utils.CalculateCheckSumU32(fim.Data))
+	return checkSum
+}

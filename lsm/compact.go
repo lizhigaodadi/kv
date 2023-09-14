@@ -3,10 +3,14 @@ package lsm
 import (
 	"bytes"
 	"fmt"
+	"github.com/pkg/errors"
+	"kv/pb"
 	"kv/utils"
 	"log"
 	"math"
+	"os"
 	"sync"
+	"time"
 )
 
 /*lsm压缩器*/
@@ -25,6 +29,7 @@ type CompactDef struct {
 	bot       []*Table
 	topKr     *KeyRange
 	botKr     *KeyRange
+	t         *Targets
 }
 
 type Targets struct {
@@ -115,6 +120,8 @@ func (lm *levelManager) doCompact(id int, p compactionPriority) error {
 			cd.nextLevel = lm.handlers[cd.nextLevel.levelNum+1]
 		}
 
+		if !
+
 	}
 
 	return nil
@@ -135,6 +142,9 @@ func (lm *levelManager) compactL0ToBaseLevel(cd *CompactDef) bool {
 	if cd.cp.adjusted >= 0.0 && cd.cp.adjusted <= 1.0 { /*它不配被压缩*/
 		return false
 	}
+	/*将L0和LBase全部锁住*/
+	levelRLock(cd.thisLevel, cd.nextLevel)
+	defer levelRUnlock(cd.thisLevel, cd.nextLevel)
 
 	/*获取l0中需要被压缩的表*/
 	tables, kr, err := lm.getL0CompactTables()
@@ -151,6 +161,9 @@ func (lm *levelManager) compactL0ToBaseLevel(cd *CompactDef) bool {
 		return false
 	}
 
+	lm.cs.updateStatus(cd)
+	defer lm.cs.finishUpdateStatus(cd)
+
 	/*基础信息已经收集足够了现在开始真正的压缩*/
 	err = lm.compact(cd)
 	if err != nil {
@@ -160,6 +173,9 @@ func (lm *levelManager) compactL0ToBaseLevel(cd *CompactDef) bool {
 }
 
 func (lm *levelManager) compact(cd *CompactDef) error {
+	/*更新全局状态表*/
+	cs := lm.cs
+
 	/*开始真正执行压缩流程，生成迭代器树*/
 	ct := append(cd.bot, cd.top...)
 	i := buildMergeIterators(ct)
@@ -184,7 +200,12 @@ func (lm *levelManager) compact(cd *CompactDef) error {
 
 	/*获取新的tableName*/
 	fid := lm.GetNewFid()
-	_, err := builder.Flush(lm, utils.FileNameSSTable(lm.opt.workDir, fid)) /*TODO:tables有什么作用，等下回来看看*/
+	newTable, err := builder.Flush(lm, utils.FileNameTemp(lm.opt.workDir, fid))
+	if err != nil {
+		return err
+	}
+	/*后续操作，更新manifest文件，删除原本的几个Table然后添加新的Table*/
+	err = lm.updateFileAfterCompact(cd, ct, newTable)
 	if err != nil {
 		return err
 	}
@@ -218,8 +239,69 @@ func getTotalSize(tables ...*Table) int {
 	return size
 }
 
+func (lm *levelManager) compactTables(cd *CompactDef) bool {
+	/*执行对非level0的压缩*/
+
+	return true
+}
+
 func (lm *levelManager) compactL0ToL0(cd *CompactDef) bool {
-	return false
+	/*由于L0CompactToLBase的失败导致执行的方法*/
+	/*判断一下该行为只有0号压缩器可以执行*/
+	if cd.id != 0 {
+		return false
+	}
+	cd.nextLevel = lm.handlers[0]
+	cd.topKr = &KeyRange{}
+	cd.top = nil
+
+	utils.CondPanic(cd.thisLevel.levelNum != 0, errors.New("cd.thisLevel.levelNum != 0"))
+	utils.CondPanic(cd.nextLevel.levelNum != 0, errors.New("cd.nextLevel.levelNum != 0"))
+
+	lm.handlers[0].rwMutex.Lock()
+	defer lm.handlers[0].rwMutex.Unlock()
+
+	/*开始进行过滤操作*/
+	now := time.Now()
+	bot := cd.bot
+	var out []*Table
+	for _, t := range bot {
+		/*不能过大*/
+		if t.Size() >= 2*cd.t.fileSz[0] {
+			continue
+		}
+		/*检查创建时间*/
+		if now.Sub(t.GetCreateAt()) < 10*time.Second {
+			/*创建时间超过10s也不要回收*/
+			continue
+		}
+		/*检查当前table是否正在被压缩*/
+		if _, beginCompacted := lm.cs.tables[t.fid]; beginCompacted {
+			continue
+		}
+
+		out = append(out, t)
+	}
+
+	/*检查数量是否足够，如果不能压缩很多，那么也没必要压缩*/
+	if len(out) < 4 {
+		return false
+	}
+	cd.bot = out
+
+	/*告知其他线程这些Table正在被压缩中*/
+	lm.cs.updateStatus(cd)
+	defer lm.cs.finishUpdateStatus(cd)
+
+	/*TODO: 这段代码有点不理解*/
+	cd.t.fileSz[0] = math.MaxUint32
+
+	/*开始真正的压缩操作*/
+	err := lm.compact(cd)
+	if err != nil {
+		return false
+	}
+	return true
 }
 
 func (lm *levelManager) getL0CompactTables() ([]*Table, *KeyRange, error) {
@@ -449,4 +531,93 @@ func GetMergeIteratorCount(tc int) int {
 		n = 1
 	}
 	return (tc / 2) + n
+}
+
+/*在内存中合并文件之后我们仍然需要更新manifest和删除旧的文件，添加新的sst文件*/
+func (lm *levelManager) updateFileAfterCompact(cd *CompactDef, oldTables []*Table, newTable *Table) error {
+	/*先更新manifest文件*/
+	mf := lm.mf
+	var changes []*pb.ManifestChange
+	changes = append(changes, &pb.ManifestChange{
+		Id:    newTable.fid,
+		Op:    pb.Operation_CREATE,
+		Level: uint32(cd.nextLevel.levelNum),
+	})
+
+	for _, t := range oldTables { /*添加要被删除的文件*/
+		changes = append(changes, &pb.ManifestChange{
+			Id:    t.fid,
+			Op:    pb.Operation_DELETE,
+			Level: uint32(cd.thisLevel.levelNum),
+		})
+	}
+	err := mf.AddChanges(changes)
+	if err != nil {
+		return err
+	}
+
+	/*删除原本的文件，修改新的文件名称*/
+	for _, t := range oldTables {
+		err := os.Remove(utils.FileNameSSTable(lm.opt.workDir, t.fid))
+		if err != nil {
+			return err
+		}
+	}
+
+	/*改名新文件*/
+	err = os.Rename(utils.FileNameTemp(lm.opt.workDir, newTable.fid),
+		utils.FileNameSSTable(lm.opt.workDir, newTable.fid))
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func levelRLock(this *levelHandler, next *levelHandler) {
+	this.rwMutex.RLock()
+	next.rwMutex.RLock()
+}
+
+func levelRUnlock(this *levelHandler, next *levelHandler) {
+	next.rwMutex.RUnlock()
+	this.rwMutex.RUnlock()
+}
+
+/*更新状态信息，需要加锁,请确保要被修改的层级已经被加锁了*/
+func (cs *compactStatus) updateStatus(cd *CompactDef) {
+	cs.m.Lock()
+	defer cs.m.Unlock()
+
+	delTables := cd.bot
+	/*计算他们的长度*/
+	var delSize uint32
+	for _, t := range delTables {
+		cs.tables[t.fid] = struct{}{}
+		delSize += t.Size()
+	}
+
+	/*开始更新*/
+	cs.levels[cd.thisLevel.levelNum].delSize += delSize
+	/*看看是哪些表要被删除了*/
+}
+
+func (cs *compactStatus) finishUpdateStatus(cd *CompactDef) {
+	cs.m.Lock()
+	defer cs.m.Unlock()
+
+	delTables := cd.bot
+	var delSize uint32
+	for _, t := range delTables {
+		/*从map中删除*/
+		delete(cs.tables, t.fid)
+		delSize += t.Size()
+	}
+
+	cs.levels[cd.thisLevel.levelNum].delSize -= delSize
+
+}
+/*TODO:待完善*/
+func (lm *levelManager) addSplits(cd *CompactDef) {
+
 }

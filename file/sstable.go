@@ -135,9 +135,6 @@ func (ss *SSTable) Close() {
 	ss.fim.Close()
 }
 
-func (ss *SSTable) GetCreatedAt() time.Time {
-	return ss.createAt
-}
 func (ss *SSTable) SetCreatedAt(time time.Time) {
 	ss.createAt = time
 }
@@ -155,4 +152,12 @@ func (ss *SSTable) Bytes(sz, offset int) ([]byte, error) {
 
 func (ss *SSTable) Sync() error {
 	return ss.fim.Sync()
+}
+
+func (ss *SSTable) CheckSum() []byte {
+	return ss.fim.CheckSum()
+}
+
+func (ss *SSTable) GetCreateAt() time.Time {
+	return ss.createAt
 }

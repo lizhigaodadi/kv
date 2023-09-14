@@ -3,6 +3,7 @@ package lsm
 import (
 	"kv/file"
 	"sync"
+	"time"
 )
 
 type Table struct {
@@ -24,6 +25,14 @@ func OpenTable(opt *file.Options) *Table {
 		ref: 1,
 		m:   sync.RWMutex{},
 	}
+}
+
+func (t *Table) CheckSum() []byte {
+	return t.ss.CheckSum()
+}
+
+func (t *Table) GetCreateAt() time.Time {
+	return t.ss.GetCreateAt()
 }
 
 func (t *Table) Sync() error {

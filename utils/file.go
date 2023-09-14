@@ -52,6 +52,10 @@ func VerifyCrc32(actual []byte, expectedCrc32 uint32) error {
 func CalculateChecksum(b []byte) uint64 {
 	return uint64(crc32.Checksum(b, CastageoliCrcTable))
 }
+
+func CalculateCheckSumU32(b []byte) uint32 {
+	return crc32.Checksum(b, CastageoliCrcTable)
+}
 func SyncDir(dir string) error {
 	/*同步某个目录，用于删除或新增某个文件后*/
 	fp, err := OpenDir(dir)
@@ -75,6 +79,10 @@ func FileNameSSTable(dir string, id uint64) string {
 }
 func FileNameWalLog(dir string, id uint64) string {
 	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameWalLog))
+}
+
+func FileNameTemp(dir string, id uint64) string {
+	return filepath.Join(dir, fmt.Sprintf("%05d.%s", id, FileSuffixNameTemp))
 }
 
 func FID(name string) uint64 {

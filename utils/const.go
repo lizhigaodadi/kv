@@ -27,4 +27,5 @@ const (
 const (
 	FileSuffixNameSSTable = ".sst"
 	FileSuffixNameWalLog  = ".wal"
+	FileSuffixNameTemp    = ".tmp"
 )

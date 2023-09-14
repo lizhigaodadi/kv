@@ -6,6 +6,7 @@ import (
 	"kv/utils"
 	"kv/utils/cache"
 	"sort"
+	"sync"
 	"sync/atomic"
 )
 
@@ -25,6 +26,7 @@ type levelHandler struct {
 	levelNum int           /*表示当前处理器所在的层级*/
 	tables   []*Table      /*本层中所有的Table表*/
 	lm       *levelManager /*通过它来获取相应的配置信息*/
+	rwMutex  *sync.RWMutex
 }
 
 /*返回当前层级table*/
