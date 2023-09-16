@@ -31,6 +31,11 @@ func (t *Table) CheckSum() []byte {
 	return t.ss.CheckSum()
 }
 
+/*TODO: 思路不明确，待之后完善*/
+func (t *Table) StaleDataSize() uint32 {
+	return 0
+}
+
 func (t *Table) GetCreateAt() time.Time {
 	return t.ss.GetCreateAt()
 }

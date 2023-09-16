@@ -9,6 +9,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -30,6 +31,9 @@ type CompactDef struct {
 	topKr     *KeyRange
 	botKr     *KeyRange
 	t         *Targets
+	split     []KeyRange
+	topKrIdx  int
+	botKrIdx  int
 }
 
 type Targets struct {
@@ -59,10 +63,17 @@ type compactStatus struct {
 	tables map[uint64]struct{}
 }
 
+func (cs *compactStatus) isCompacting(levelNum int, table *Table) bool {
+	if _, ok := cs.tables[table.fid]; ok {
+		return true
+	}
+	return false
+}
+
 type levelCompactStatus struct {
 	levelNum int
-	delSize  uint32   /*记录了当前层级中即将要被删除的部分所占比重*/
-	kr       KeyRange /*记录了当前层级中键值对所占的范围*/
+	delSize  uint32 /*记录了当前层级中即将要被删除的部分所占比重*/
+	krs      []*KeyRange
 }
 
 func (lm *levelManager) runOnce(id int) bool {
@@ -119,8 +130,7 @@ func (lm *levelManager) doCompact(id int, p compactionPriority) error {
 		if !lm.isLastLevel(cd.nextLevel.levelNum) {
 			cd.nextLevel = lm.handlers[cd.nextLevel.levelNum+1]
 		}
-
-		if !
+		lm.compactTables(cd)
 
 	}
 
@@ -240,8 +250,38 @@ func getTotalSize(tables ...*Table) int {
 }
 
 func (lm *levelManager) compactTables(cd *CompactDef) bool {
+	cd.levelRLock()
+	defer cd.levelRUnlock()
 	/*执行对非level0的压缩*/
+	/*判断一下是不是lMax压缩到lMax的情况*/
+	if cd.thisLevel.levelNum == cd.nextLevel.levelNum { /*这个是压缩自己的操作*/
+		return lm.fillMaxLevelTables(cd)
+	}
 
+	/*开始levelN到levelN+1的压缩*/
+	bTables := make([]*Table, len(cd.thisLevel.tables))
+	copy(bTables, cd.thisLevel.tables)
+
+	now := time.Now()
+	for _, t := range bTables { /*前提是这个是按照fid来进行排序的*/
+		/*判断一下这个是否要被压缩*/
+		if lm.cs.isCompacting(cd.thisLevel.levelNum, t) {
+			continue
+		}
+		/*判断这个层级的下一层中压缩的key范围是否包括在t中了*/
+		if lm.cs.overlapsWith(cd.nextLevel.levelNum, t) {
+			continue
+		}
+		/*查看创建时间*/
+		if now.Sub(now) > 10*time.Second { /*后续生成的文件创建时间只会更小直接退出即可*/
+			return false
+		}
+		/*找到合适的了开始压缩到下一层即可*/
+		cd.bot = []*Table{t}
+		cd.botKr = getKeyRange(t)
+		break
+	}
+	lm.cs.updateStatus(cd)
 	return true
 }
 
@@ -590,16 +630,31 @@ func (cs *compactStatus) updateStatus(cd *CompactDef) {
 	defer cs.m.Unlock()
 
 	delTables := cd.bot
+	compactTables := cd.top
 	/*计算他们的长度*/
 	var delSize uint32
+
+	cd.botKrIdx = len(cs.levels[cd.thisLevel.levelNum].krs)
+	cd.topKrIdx = len(cs.levels[cd.thisLevel.levelNum].krs)
+
 	for _, t := range delTables {
 		cs.tables[t.fid] = struct{}{}
 		delSize += t.Size()
+		/*增加被删除的面积*/
+		kr := getKeyRange(t)
+		/*增加新的范围*/
+		cs.levels[cd.thisLevel.levelNum].krs = append(cs.levels[cd.thisLevel.levelNum].krs, kr)
+	}
+	for _, t := range compactTables {
+		cs.tables[t.fid] = struct{}{}
+		kr := getKeyRange(t)
+		cs.levels[cd.nextLevel.levelNum].krs = append(cs.levels[cd.nextLevel.levelNum].krs, kr)
 	}
 
 	/*开始更新*/
 	cs.levels[cd.thisLevel.levelNum].delSize += delSize
 	/*看看是哪些表要被删除了*/
+
 }
 
 func (cs *compactStatus) finishUpdateStatus(cd *CompactDef) {
@@ -607,17 +662,185 @@ func (cs *compactStatus) finishUpdateStatus(cd *CompactDef) {
 	defer cs.m.Unlock()
 
 	delTables := cd.bot
+	compactTables := cd.top
 	var delSize uint32
+
 	for _, t := range delTables {
 		/*从map中删除*/
 		delete(cs.tables, t.fid)
 		delSize += t.Size()
 	}
 
+	for _, t := range compactTables {
+		delete(cs.tables, t.fid)
+	}
+
+	/*修改range范围*/
+	topKrIdx := cd.topKrIdx
+	botKrIdx := cd.botKrIdx
+
+	topCount := len(cd.top)
+	botCount := len(cd.top)
+	/*开始修改*/
+	cs.levels[cd.nextLevel.levelNum].krs =
+		append(cs.levels[cd.nextLevel.levelNum].krs[0:topKrIdx],
+			cs.levels[cd.nextLevel.levelNum].krs[topKrIdx+topCount:]...)
+	cs.levels[cd.thisLevel.levelNum].krs =
+		append(cs.levels[cd.thisLevel.levelNum].krs[0:botKrIdx],
+			cs.levels[cd.thisLevel.levelNum].krs[botKrIdx+botCount:]...)
+
 	cs.levels[cd.thisLevel.levelNum].delSize -= delSize
 
 }
+
 /*TODO:待完善*/
 func (lm *levelManager) addSplits(cd *CompactDef) {
+	/*将两个*/
+	cd.split = cd.split[:0]
 
+	width := int(math.Ceil(float64(len(cd.top)) / 5.0))
+	if width < 3 {
+		width = 3
+	}
+
+	skr := cd.botKr
+	skr.extends(cd.topKr)
+
+	addRange := func(right []byte) {
+		curKr := KeyRange{
+			left:  skr.left,
+			right: skr.right,
+		}
+		curKr.right = utils.Copy(right)
+		cd.split = append(cd.split, curKr)
+		skr.left = curKr.right
+	}
+
+	for i, t := range cd.top {
+		if i == len(cd.top)-1 {
+			addRange([]byte{}) /*终结的标识*/
+			return
+		}
+
+		if i%width == width-1 {
+			/*开始切割*/
+			right := utils.KeyWithTs(utils.ParseKey(t.MaxKey()), math.MaxUint64)
+			addRange(right)
+		}
+	}
+
+}
+
+func (lm *levelManager) fillMaxLevelTables(cd *CompactDef) bool {
+	tables := cd.bot
+	sortedTables := make([]*Table, len(tables)) /*请确保这些已经被排序了*/
+	copy(sortedTables, tables)
+	lm.sortByStaleDataSize(sortedTables, cd)
+
+	if len(sortedTables) > 0 && sortedTables[0].StaleDataSize() == 0 {
+		return false
+	}
+
+	cd.top = []*Table{}
+	collectTopTables := func(t *Table, needSz uint32) {
+		totalSize := t.Size()
+
+		j := sort.Search(len(tables), func(i int) bool {
+			return utils.CompareKeys(tables[i].ss.MinKey(), t.ss.MinKey()) >= 0
+		})
+		utils.CondPanic(tables[j].fid != t.fid, errors.New("tables[j].ID() != t.ID()"))
+		j++
+		for j < len(tables) {
+			newT := tables[j]
+			totalSize += newT.Size()
+
+			if totalSize > needSz {
+				break
+			}
+			cd.top = append(cd.bot, newT)
+			cd.topKr.extends(getKeyRange(newT))
+			j++
+		}
+	}
+
+	/*第二层过滤*/
+	now := time.Now()
+
+	for _, t := range sortedTables {
+		/*检查创建时间*/
+		if now.Sub(t.GetCreateAt()) < time.Hour {
+			continue
+		}
+		/*检查需要删除的key多不多*/
+		if t.StaleDataSize() < 10<<20 {
+			continue
+		}
+
+		/*检查该表是否正在被压缩中*/
+		if lm.cs.isCompacting(cd.thisLevel.levelNum, t) {
+			continue
+		}
+		cd.top = []*Table{t} /*找到合适的了，将这个后面所有合适的一起加入进来*/
+		needFileSz := cd.t.fileSz[cd.thisLevel.levelNum]
+		if t.Size() > needFileSz { /*没必要继续了*/
+			break
+		}
+
+		collectTopTables(t, needFileSz)
+		/*TODO:更新合并状态信息*/
+	}
+	if len(cd.top) == 0 {
+		return false
+	}
+
+	/*TODO:确定好了合并的表就开始更新状态*/
+	lm.cs.updateStatus(cd)
+	defer lm.cs.finishUpdateStatus(cd)
+
+	/*TODO:开始真正的合并压缩最后一层*/
+
+	return true
+}
+
+func (lm *levelManager) sortByStaleDataSize(tables []*Table, cd *CompactDef) {
+	/*TODO:统计sst文件中旧数据，并进行排序*/
+	if len(tables) == 0 || cd.nextLevel == nil {
+		return
+	}
+
+	sort.Slice(tables, func(i, j int) bool {
+		return tables[i].StaleDataSize() > tables[j].StaleDataSize()
+	})
+}
+
+func (cd *CompactDef) levelRLock() {
+	/*判断一下两个level是不是同一个*/
+	if cd.thisLevel.levelNum == cd.nextLevel.levelNum {
+		cd.thisLevel.rwMutex.RLock()
+	} else {
+		levelRLock(cd.thisLevel, cd.nextLevel)
+	}
+}
+
+func (cd *CompactDef) levelRUnlock() {
+	/*判断一下两个level是不是同一个*/
+	if cd.thisLevel.levelNum == cd.nextLevel.levelNum {
+		cd.thisLevel.rwMutex.RUnlock()
+	} else {
+		levelRUnlock(cd.thisLevel, cd.nextLevel)
+	}
+}
+
+/*该函数仅仅比较范围*/
+func (cs *compactStatus) overlapsWith(levelNum int, t *Table) bool {
+
+	krs := cs.levels[levelNum].krs
+	curKr := getKeyRange(t)
+	for _, kr := range krs {
+		if curKr.overlapsWith(kr) {
+			return false
+		}
+	}
+
+	return true
 }
