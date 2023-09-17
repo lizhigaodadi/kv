@@ -211,3 +211,11 @@ func (wf *WalFile) Close() error {
 	wf.fim.Close()
 	return nil
 }
+
+func (wf *WalFile) EstimateSz() int {
+	return wf.fim.DataSize
+}
+
+func (wf *WalFile) Dir() string {
+	return wf.opt.Dir
+}

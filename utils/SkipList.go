@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"kv/lsm"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -28,7 +29,7 @@ func (s *SkipList) DecrRef() {
 	atomic.AddInt32(&s.ref, -1)
 }
 
-func (s *SkipList) newSkipListIterator() *SkipListIterator {
+func (s *SkipList) NewSkipListIterator() *SkipListIterator {
 	s.IncrRef()
 	it := &SkipListIterator{
 		SkipList: s,
@@ -94,13 +95,15 @@ func (it *SkipListIterator) Next() {
 	AssertTrue(it.Valid())
 	it.curNode = it.SkipList.getNext(it.curNode, 0)
 }
-func (it *SkipListIterator) Item() *Entry {
-	return &Entry{
-		Key:   it.Key(),
-		Value: it.Value().Value,
+func (it *SkipListIterator) Item() Item {
+	return &lsm.Item{
+		E: &Entry{
+			Key:   it.Key(),
+			Value: it.Value().Value,
 
-		ExpireAt: it.Value().ExpiresAt,
-		Version:  it.Value().Version,
+			ExpireAt: it.Value().ExpiresAt,
+			Version:  it.Value().Version,
+		},
 	}
 }
 
@@ -200,7 +203,6 @@ func (s *SkipList) Draw(align bool) {
 		}
 
 	}
-
 }
 
 func (s *SkipList) MemSize() uint32 {
@@ -294,6 +296,7 @@ func (n *node) casnextOffset(h int, old, val uint32) bool {
 找到要插入的位置 返回该位置的前后两个节点的指针偏移量
 这个before是插入位置前的任何一个节点(通常来说是头节点)
 */
+
 func (s *SkipList) findSpliceForLevel(key []byte, before uint32, level int) (uint32, uint32) {
 	for {
 		beforeNode := s.arena.getNode(before)

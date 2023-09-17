@@ -21,6 +21,7 @@ var (
 	TableCompactErr   = errors.New("Table Compact Failed")
 	TopTablesPullErr  = errors.New("Top Tables Pull Failed")
 	BuildMergeIterErr = errors.New("Build MergeIterator Failed")
+	EntryNilErr       = errors.New("Entry or entry.Key is nil")
 )
 
 func CondPanic(condition bool, e error) {

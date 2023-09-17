@@ -5,9 +5,11 @@ import (
 	"kv/file"
 	"kv/utils"
 	"kv/utils/cache"
+	"math/rand"
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type levelManager struct {
@@ -57,6 +59,27 @@ func PrevPullDBMessage() {
 func NewLevelManager() *levelManager {
 	/*TODO:创建一个LevelManager*/
 	return nil
+}
+
+func (lm *levelManager) runCompacter(id int) {
+	defer lm.lsm.closer.Done()
+	randomDelay := time.NewTimer(time.Duration(rand.Int31n(1000)) * time.Millisecond)
+	select {
+	case <-randomDelay.C:
+	case <-lm.lsm.closer.CloseSignal:
+		randomDelay.Stop()
+		return
+	}
+	ticker := time.NewTicker(50000 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			lm.runOnce(id)
+		case <-lm.lsm.closer.CloseSignal:
+			return
+		}
+	}
 }
 
 /*该方法应该在后台线程下执行，生成相应的一个执行计划*/

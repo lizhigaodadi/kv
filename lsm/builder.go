@@ -39,6 +39,8 @@ type Options struct {
 	BaseLevelSize            int /*最底层的level大小*/
 	BaseTableSize            int
 	BotLevelTableCount       int /*0层Level Table的数量*/
+	NumCompactors            int
+	MaxMemTableSize          int
 	//CompactMinSize           int /*压缩至少了达到这个标准才会进行压缩*/
 }
 
@@ -416,7 +418,7 @@ func (bi *BlockIterator) Item() utils.Item {
 
 	/**/
 	item := &Item{
-		e: &utils.Entry{
+		E: &utils.Entry{
 			Key:      key,
 			Value:    vs.Value,
 			ExpireAt: vs.ExpiresAt,

@@ -175,16 +175,14 @@ func (lm *levelManager) compactL0ToBaseLevel(cd *CompactDef) bool {
 	defer lm.cs.finishUpdateStatus(cd)
 
 	/*基础信息已经收集足够了现在开始真正的压缩*/
-	err = lm.compact(cd)
+	err = lm.compact(cd, false)
 	if err != nil {
 		return false
 	}
 	return false
 }
 
-func (lm *levelManager) compact(cd *CompactDef) error {
-	/*更新全局状态表*/
-	cs := lm.cs
+func (lm *levelManager) compact(cd *CompactDef, needSplit bool) error {
 
 	/*开始真正执行压缩流程，生成迭代器树*/
 	ct := append(cd.bot, cd.top...)
@@ -193,29 +191,44 @@ func (lm *levelManager) compact(cd *CompactDef) error {
 	if !ok {
 		return utils.BuildMergeIterErr
 	}
-
+	if needSplit { /*开始进行分片*/
+		lm.addSplits(cd)
+	} else {
+		lm.noSplits(cd)
+	}
+	newTables := make([]*Table, 0)
+	var builder *TableBuilder
 	/*生成相应的TableBuilder*/
-	builder := NewTableBuilder(lm.opt)
-
-	for mi.Valid() {
-		e := mi.Item().Entry()
-		/*判断一下是否可用*/
-		if isSkip(e, mi.LastKey()) {
-			mi.Next() /*因为Next会修改LastKey的值所以必须在LastKey()之后执行*/
-			continue
+	count := 0
+	for count < len(cd.split) {
+		builder = NewTableBuilder(lm.opt)
+		for mi.Valid() {
+			e := mi.Item().Entry()
+			/*判断一下是否需要跳出循环*/
+			if utils.CompareKeys(e.Key, cd.split[count].right) > 0 {
+				/*获取新的tableName*/
+				fid := lm.GetNewFid()
+				newTable, err := builder.Flush(lm, utils.FileNameTemp(lm.opt.workDir, fid))
+				if err != nil {
+					return err
+				}
+				newTables = append(newTables, newTable)
+				count++
+				break
+			}
+			/*判断一下是否可用*/
+			if isSkip(e, mi.LastKey()) {
+				mi.Next() /*因为Next会修改LastKey的值所以必须在LastKey()之后执行*/
+				continue
+			}
+			mi.Next()
+			builder.Add(e)
 		}
-		mi.Next()
-		builder.Add(e)
+
 	}
 
-	/*获取新的tableName*/
-	fid := lm.GetNewFid()
-	newTable, err := builder.Flush(lm, utils.FileNameTemp(lm.opt.workDir, fid))
-	if err != nil {
-		return err
-	}
 	/*后续操作，更新manifest文件，删除原本的几个Table然后添加新的Table*/
-	err = lm.updateFileAfterCompact(cd, ct, newTable)
+	err := lm.updateFileAfterCompact(cd, ct, newTables...)
 	if err != nil {
 		return err
 	}
@@ -281,7 +294,24 @@ func (lm *levelManager) compactTables(cd *CompactDef) bool {
 		cd.botKr = getKeyRange(t)
 		break
 	}
+	/*检查是否为空*/
+	if len(cd.bot) == 0 { /*没有合适的*/
+		return false
+	}
+
+	if !lm.normalMatchAppropriateNext(cd) {
+		return false
+	}
+
 	lm.cs.updateStatus(cd)
+	defer lm.cs.finishUpdateStatus(cd)
+	/*执行压缩流程*/
+	err := lm.compact(cd, true)
+
+	if err != nil {
+		return false
+	}
+
 	return true
 }
 
@@ -574,15 +604,17 @@ func GetMergeIteratorCount(tc int) int {
 }
 
 /*在内存中合并文件之后我们仍然需要更新manifest和删除旧的文件，添加新的sst文件*/
-func (lm *levelManager) updateFileAfterCompact(cd *CompactDef, oldTables []*Table, newTable *Table) error {
+func (lm *levelManager) updateFileAfterCompact(cd *CompactDef, oldTables []*Table, newTables ...*Table) error {
 	/*先更新manifest文件*/
 	mf := lm.mf
 	var changes []*pb.ManifestChange
-	changes = append(changes, &pb.ManifestChange{
-		Id:    newTable.fid,
-		Op:    pb.Operation_CREATE,
-		Level: uint32(cd.nextLevel.levelNum),
-	})
+	for _, t := range newTables {
+		changes = append(changes, &pb.ManifestChange{
+			Id:    t.fid,
+			Op:    pb.Operation_CREATE,
+			Level: uint32(cd.nextLevel.levelNum),
+		})
+	}
 
 	for _, t := range oldTables { /*添加要被删除的文件*/
 		changes = append(changes, &pb.ManifestChange{
@@ -604,11 +636,19 @@ func (lm *levelManager) updateFileAfterCompact(cd *CompactDef, oldTables []*Tabl
 		}
 	}
 
-	/*改名新文件*/
-	err = os.Rename(utils.FileNameTemp(lm.opt.workDir, newTable.fid),
-		utils.FileNameSSTable(lm.opt.workDir, newTable.fid))
-	if err != nil {
-		return err
+	/*改名操作*/
+	for _, t := range newTables {
+		/*获取fid*/
+		fid := t.fid
+		newName := utils.FileNameSSTable(lm.opt.workDir, fid)
+		/*修改名称*/
+		oldName := utils.FileNameTemp(lm.opt.workDir, fid)
+		/*开始进行修改*/
+		err := os.Rename(oldName, newName)
+		if err != nil { /*TODO:异常处理肯定不能如此潦草，之后继续完善*/
+			return err
+		}
+
 	}
 
 	return nil
@@ -731,6 +771,13 @@ func (lm *levelManager) addSplits(cd *CompactDef) {
 
 }
 
+func (lm *levelManager) noSplits(cd *CompactDef) {
+	/*不进行分片处理*/
+	cd.split = make([]KeyRange, 1)
+	cd.split[0].left = cd.topKr.left
+	cd.split[0].right = []byte{}
+}
+
 func (lm *levelManager) fillMaxLevelTables(cd *CompactDef) bool {
 	tables := cd.bot
 	sortedTables := make([]*Table, len(tables)) /*请确保这些已经被排序了*/
@@ -840,6 +887,35 @@ func (cs *compactStatus) overlapsWith(levelNum int, t *Table) bool {
 		if curKr.overlapsWith(kr) {
 			return false
 		}
+	}
+
+	return true
+}
+
+/*普通的找到合适的下一层*/
+func (lm *levelManager) normalMatchAppropriateNext(cd *CompactDef) bool {
+	nextKr := cd.botKr
+
+	/*在下一层寻找合适的*/
+	nextTables := make([]*Table, 0)
+	nextLevel := cd.nextLevel.levelNum
+	now := time.Now()
+	for _, t := range cd.nextLevel.tables { /*寻找合适的*/
+		if lm.cs.isCompacting(nextLevel, t) || lm.cs.overlapsWith(nextLevel, t) {
+			continue
+		}
+		/*检测创建时间*/
+		if now.Sub(t.GetCreateAt()) < 10*time.Second {
+			/*直接结束*/
+			break
+		}
+
+		kr := getKeyRange(t)
+		if nextKr.overlapsWith(kr) { /*涉及了*/
+			nextKr.extends(kr)
+			nextTables = append(nextTables, t)
+		}
+
 	}
 
 	return true

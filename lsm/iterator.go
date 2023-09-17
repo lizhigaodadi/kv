@@ -3,7 +3,6 @@ package lsm
 import (
 	"github.com/pkg/errors"
 	"kv/utils"
-	"log"
 )
 
 type Iterator struct {
@@ -12,77 +11,11 @@ type Iterator struct {
 }
 
 type Item struct {
-	e *utils.Entry
+	E *utils.Entry
 }
 
 func (it *Item) Entry() *utils.Entry {
-	return it.e
-}
-
-type TableIterator struct {
-	t     *Table
-	kr    KeyRange /*用于给TableIterator进行排序使用*/
-	idx   int      /*表示当前的迭代器位置*/
-	iters []*BlockIterator
-}
-
-func NewTableIterator(t *Table) *TableIterator {
-	/*TODO:暂时不要进行初始化，因为可能会导致初始化过多的oom*/
-	return nil
-}
-
-func (ti *TableIterator) Next() { /*移动到下一个位置*/
-	/*判断迭代器是否生效*/
-	if !ti.Valid() { /*迭代器失效了*/
-		log.Fatal("TableIterator Invalid")
-		return
-	}
-	/*判断当前分迭代器是否已经到达了尽头*/
-	if ti.iters[ti.idx].HasNext() { /*判断是否还有下一个*/
-		if ti.idx < len(ti.iters)-1 { /*移动到下一个位置*/
-			ti.idx++
-			ti.iters[ti.idx].Rewind() /*移动到起始位置*/
-		} else { /*已经到了尽头*/
-			return
-		}
-	}
-
-	/*移动到下一个位置*/
-	ti.iters[ti.idx].Next()
-}
-
-func (ti *TableIterator) Item() utils.Item {
-	if !ti.Valid() {
-		return &Item{
-			e: nil,
-		}
-	}
-	return ti.iters[ti.idx].Item()
-}
-
-func (ti *TableIterator) Valid() bool {
-	if len(ti.iters) == 0 {
-		return false
-	}
-	return ti.idx >= 0 && ti.idx < len(ti.iters)
-}
-
-func (ti *TableIterator) Rewind() {
-	/*对所有的迭代器都进行一次rewind*/
-	for _, iter := range ti.iters { /*rewind*/
-		iter.Rewind()
-	}
-	ti.idx = 0
-}
-
-func (ti *TableIterator) Close() {
-	for _, iter := range ti.iters { /*rewind*/
-		iter.Close()
-	}
-}
-
-func (ti *TableIterator) Seek(key []byte) {
-	/*TODO:暂时没什么头绪有一个比较好的解决方案*/
+	return it.E
 }
 
 type LevelIterator struct {
@@ -174,7 +107,7 @@ func (mi *MergeIterator) Item() utils.Item {
 	}
 
 	return &Item{
-		e: nil,
+		E: nil,
 	}
 }
 

@@ -14,16 +14,6 @@ import (
 	"sync/atomic"
 )
 
-type LSM struct {
-	opt                 Options
-	memTables           []*memTable
-	mem                 *memTable
-	maxFid              uint64 /*用于原子的递增fid*/
-	levelSteppedUpBasis int    /*level递增基数*/
-	lm                  *levelManager
-	/*TODO: 待完善*/
-}
-
 /*从磁盘中读取到我们内存表中*/
 func (lsm *LSM) recovery() (*memTable, []*memTable) {
 	/*新建一个*/
@@ -201,8 +191,13 @@ func (mt *memTable) Close() error {
 	return mt.wal.Close()
 }
 
-func (lsm *LSM) StartCompacter() {
-	/*TODO: 启动磁盘压缩线程，该方法是后台线程*/
-	/*确保此时我们的元数据信息已经被成功加载到内存当中了*/
+/*预估一下文件占据的大小*/
+func (mt *memTable) estimateSz() int {
+	/*计算wal日志和跳表的大小*/
+	var es int
+	es += mt.wal.EstimateSz()
+	/*计算跳表的预估大小*/
+	es += int(mt.sl.MemSize())
 
+	return es
 }
