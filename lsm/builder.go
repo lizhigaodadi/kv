@@ -12,6 +12,7 @@ import (
 	"log"
 	"math"
 	"path/filepath"
+	"sort"
 	"unsafe"
 )
 
@@ -53,6 +54,20 @@ type Block struct {
 	data         []byte   /*实际存储的数据都被序列化在data中*/
 	checkSum     []byte   /*用于对数据做安全检查保证数据的可靠和安全*/
 	baseKey      []byte   /*用于压缩Keys*/
+}
+
+func NewBlock(offset int, end int, chkLen int, data []byte, baseKey []byte) *Block {
+	return &Block{
+		offset:  offset,
+		end:     end,
+		chkLen:  chkLen,
+		data:    data,
+		baseKey: baseKey,
+	}
+}
+
+func (b *Block) SetBaseKey(key []byte) {
+	b.baseKey = key
 }
 
 /*该数据结构是用于内存中存储要被持久化的数据内容*/
@@ -345,7 +360,7 @@ type BlockIterator struct {
 	block       *Block /*原本的block块*/
 }
 
-func NewBlockIterator(block *Block, bId int) *BlockIterator {
+func (block *Block) NewBlockIterator(bId int) *BlockIterator {
 	bi := &BlockIterator{
 		blockId:     bId,
 		idx:         -1, /*-1 代表着目前是一个失效的迭代器*/
@@ -383,6 +398,14 @@ func (bi *BlockIterator) Next() { /*读取倒下一个*/
 
 	/*移动指针*/
 	bi.idx++
+}
+
+func (bi *BlockIterator) SeekToFirst() {
+	bi.idx = 0
+}
+
+func (bi *BlockIterator) SeekToEnd() {
+	bi.idx = len(bi.entryOffset) - 1
 }
 
 /*返回当前迭代器元素*/
@@ -433,26 +456,17 @@ func (bi *BlockIterator) HasNext() bool {
 
 func (bi *BlockIterator) Seek(key []byte) {
 	/*TODO: 目前还未确定是否需要这个*/
-	//lastIdx := bi.idx
-	bi.Rewind()
-	/*这里进行一个二分查找*/
-	left := 0
-	right := len(bi.data)
-	for left < right {
-		mid := left + right
+	bi.err = nil
+	startIndex := 0
 
-		/*判断一下是大还是小了*/
-		e := bi.getItem(mid).Entry()
-		cmp := utils.CompareKeys(e.Key, key)
-		if cmp < 0 {
-			left = mid + 1
-		} else if cmp > 0 {
-			right = mid - 1
-		} else { /*找到了*/
-
+	foundEntryIdx := sort.Search(len(bi.entryOffset), func(idx int) bool {
+		if idx < startIndex {
+			return false
 		}
-		/**/
-	}
+		e := bi.getItem(idx).Entry()
+		return utils.CompareKeys(e.Key, key) >= 0
+	})
+	bi.idx = foundEntryIdx
 }
 
 func (bi *BlockIterator) getItem(idx int) utils.Item {

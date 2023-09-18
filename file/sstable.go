@@ -1,8 +1,10 @@
 package file
 
 import (
+	"encoding/binary"
 	"github.com/golang/protobuf/proto"
 	"github.com/pkg/errors"
+	"kv/lsm"
 	"kv/pb"
 	"kv/utils"
 	"log"
@@ -35,6 +37,21 @@ func OpenSStable(opt *Options) *SSTable {
 
 func (ss *SSTable) Size() uint32 {
 	return uint32(ss.fim.DataSize)
+}
+
+func (ss *SSTable) BlockCount() int {
+	ti := ss.idxTable
+	return len(ti.Offsets)
+}
+
+/*TODO:请确保该方法执行前sst被加载到了内存当中*/
+func (ss *SSTable) GetBlockOffset(idx int) *pb.BlockOffset {
+	/*判断是否超出范围*/
+	if idx < 0 || idx >= ss.BlockCount() {
+		return nil
+	}
+
+	return ss.idxTable.GetOffsets()[idx]
 }
 
 func (ss *SSTable) Init() error {
@@ -97,8 +114,8 @@ func (ss *SSTable) initTable() (bo *pb.BlockOffset, err error) {
 func (ss *SSTable) read(offset, sz int) ([]byte, error) {
 	/*判断是否超出*/
 	bytes, err := ss.fim.Bytes(offset, sz)
-	return bytes, err
 
+	return bytes, err
 }
 
 func (ss *SSTable) readCheckError(readPos, size int) []byte {
@@ -160,4 +177,54 @@ func (ss *SSTable) CheckSum() []byte {
 
 func (ss *SSTable) GetCreateAt() time.Time {
 	return ss.createAt
+}
+
+func (ss *SSTable) ReadBlock(idx int) (*lsm.Block, error) {
+	/*检查是否超出了我们读取的范围*/
+	ti := ss.idxTable
+	blockCount := len(ti.Offsets)
+	if idx >= blockCount {
+		return nil, utils.OverRangeErr
+	}
+
+	tb := ti.Offsets[idx]
+	baseKey := tb.Key
+	blockBuffer, err := ss.fim.Bytes(int(tb.Length), int(tb.Offset))
+	if err != nil {
+		return nil, err
+	}
+
+	/*开始反序列化*/
+	curBlock := BlockUnMarshal(blockBuffer)
+	curBlock.SetBaseKey(baseKey)
+
+	return curBlock, nil
+}
+
+func BlockUnMarshal(buffer []byte) *lsm.Block {
+	readPos := len(buffer)
+
+	chkLen := buffer[readPos-1]
+	utils.CondPanic(chkLen != 8, utils.UnMarshalParseErr)
+	readPos -= 1
+	chk := binary.BigEndian.Uint64(buffer[readPos-int(chkLen) : readPos])
+	readPos -= int(chkLen)
+	/*offsetLen长度为4*/
+	offsetLen := binary.BigEndian.Uint32(buffer[readPos-4 : readPos])
+	readPos -= 4
+	utils.CondPanic(offsetLen%4 != 0, utils.UnMarshalParseErr)
+
+	offsetBuf := buffer[readPos-int(offsetLen) : readPos]
+	readPos -= int(offsetLen)
+	entryOffsets := make([]uint32, 0)
+	for i := 0; i < int(offsetLen); i += 4 {
+		eo := utils.BytesToU32(offsetBuf[i : i+4])
+		entryOffsets = append(entryOffsets, eo)
+	}
+	data := buffer[0:readPos]
+	/*计算当前的校验和*/
+	curChk := utils.CalculateChecksum(data)
+	utils.CondPanic(curChk != chk, utils.UnMarshalParseErr)
+
+	return lsm.NewBlock(0, readPos, int(chkLen), data, nil)
 }

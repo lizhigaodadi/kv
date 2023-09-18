@@ -4,6 +4,7 @@ import (
 	"kv/file"
 	"kv/utils"
 	"log"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,7 +12,7 @@ import (
 
 type Table struct {
 	ss  *file.SSTable
-	opt *Options
+	opt *utils.Options
 	/*TODO: levelManager*/
 	fid uint64
 	ref int32        /*ref次数，来实现垃圾回收*/
@@ -33,6 +34,10 @@ func OpenTable(opt *file.Options) *Table {
 
 func (t *Table) IncrRef() {
 	atomic.AddInt32(&t.ref, 1)
+}
+
+func (t *Table) DecrDef() {
+	atomic.AddInt32(&t.ref, -1)
 }
 
 func OpenTableByBuilder(lm *levelManager, tableName string, builder *TableBuilder) *Table {
@@ -109,9 +114,36 @@ type TableIterator struct {
 }
 
 /*请确保Table是已经初始化好了的*/
-func NewTableIterator(t *Table) *TableIterator {
+func NewTableIterator(t *Table) (*TableIterator, error) {
+	/*读取它身上的所有块迭代器出来*/
+	t.IncrRef()
+	/*计算有多少个block*/
+	bc := t.ss.BlockCount()
+	blocks := make([]*Block, 0)
+	biters := make([]*BlockIterator, 0)
+	for i := 0; i < bc; i++ {
+		/*反序列化block*/
+		block, err := t.ss.ReadBlock(i)
+		if err != nil {
+			t.DecrDef()
+			/*TODO:把之前创建的资源全部Close(之后完善)*/
 
-	return nil
+			return nil, err
+		}
+		biter := block.NewBlockIterator(i)
+		biters = append(biters, biter)
+		blocks = append(blocks, block)
+	}
+
+	/*创建相应的迭代器*/
+	ti := &TableIterator{
+		t:     t,
+		kr:    KeyRange{},
+		idx:   0,
+		iters: biters,
+	}
+
+	return ti, nil
 }
 
 func (ti *TableIterator) Next() { /*移动到下一个位置*/
@@ -132,6 +164,21 @@ func (ti *TableIterator) Next() { /*移动到下一个位置*/
 
 	/*移动到下一个位置*/
 	ti.iters[ti.idx].Next()
+}
+
+func (ti *TableIterator) SeekToFirst() {
+	/*移动到第一个位置*/
+	ti.idx = 0
+	/*全部设置到初始的模式*/
+	for _, iter := range ti.iters {
+		iter.Rewind()
+	}
+}
+
+func (ti *TableIterator) SeekToEnd() {
+	/*设置到最后*/
+	ti.idx = len(ti.iters) - 1
+
 }
 
 func (ti *TableIterator) Item() utils.Item {
@@ -166,4 +213,9 @@ func (ti *TableIterator) Close() {
 
 func (ti *TableIterator) Seek(key []byte) {
 	/*TODO:暂时没什么头绪有一个比较好的解决方案*/
+	/*找到每一个块的最小Key*/
+	idx := sort.Search(ti.t.ss.BlockCount(), func(idx int) bool {
+		/*获取idx代表的block*/
+
+	})
 }
