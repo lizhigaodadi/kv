@@ -42,6 +42,7 @@ type Options struct {
 	BotLevelTableCount       int /*0层Level Table的数量*/
 	NumCompactors            int
 	MaxMemTableSize          int
+	MaxLevelNum              int
 	//CompactMinSize           int /*压缩至少了达到这个标准才会进行压缩*/
 }
 
@@ -370,6 +371,9 @@ func (block *Block) NewBlockIterator(bId int) *BlockIterator {
 	}
 
 	return bi
+}
+func (bi *BlockIterator) Err() error {
+	return bi.err
 }
 
 func (bi *BlockIterator) Rewind() {

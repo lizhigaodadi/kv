@@ -1,6 +1,9 @@
 package lsm
 
-import "kv/utils"
+import (
+	"kv/file"
+	"kv/utils"
+)
 
 type LSM struct {
 	opt                 Options
@@ -37,8 +40,56 @@ func (lsm *LSM) Set(entry *utils.Entry) error {
 	if err != nil {
 		return err
 	}
+	/*检查是否需要刷盘*/
+	for _, table := range lsm.memTables {
+		err = lsm.lm.flush(table)
+		if err != nil {
+			return err
+		}
+		/*TODO:这里实际应该是通过减少标记的方式close*/
+		err = table.Close()
+		utils.Panic(err)
+	}
 
-	return nil
+	if len(lsm.memTables) != 0 {
+		/*将其置空*/
+		lsm.memTables = make([]*memTable, 0)
+	}
+	return err
+}
+
+func (lsm *LSM) Get(key []byte) (*utils.Entry, error) {
+	if len(key) == 0 {
+		return nil, utils.EntryNilErr
+	}
+	lsm.closer.Add(1) /*保证优雅的关闭数据库*/
+	defer lsm.closer.Done()
+
+	var (
+		entry *utils.Entry
+		err   error
+	)
+
+	/*先从内存表中去找*/
+	if entry, err = lsm.mem.Get(key); err != nil {
+		return nil, err
+	}
+	/*再从备用的内存表中去寻找*/
+	for _, t := range lsm.memTables {
+		entry, err = t.Get(key)
+		if err == nil { /*成功找到了*/
+			return entry, err
+		}
+		/*继续找*/
+	}
+
+	/*内存中没有匹配的数据，现在从磁盘中寻找*/
+	entry, err = lsm.lm.Get(key)
+	if err != nil {
+		return nil, err
+	}
+
+	return entry, err
 }
 
 func (lsm *LSM) Rotate() {
@@ -60,7 +111,16 @@ func (lm *levelManager) flush(t *memTable) error {
 	}
 
 	//创建一个table对象
-	table := OpenTable(lm.opt)
+	table := OpenTableByBuilder(lm, sstName, builder)
+	err := lm.mf.AddTableMeta(0, &file.TableMeta{
+		Id:       fid,
+		CheckSum: []byte{'m', 'o', 'c', 'k'},
+	})
+
+	if err != nil {
+		return err
+	}
+	lm.handlers[0].Add(table)
 
 	return nil
 }

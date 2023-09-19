@@ -24,6 +24,9 @@ var (
 	EntryNilErr       = errors.New("Entry or entry.Key is nil")
 	OverRangeErr      = errors.New("Over Range Err")
 	UnMarshalParseErr = errors.New("UnMarshal Data Failed")
+	KeyNotFoundErr    = errors.New("Key Not Found")
+	RepeatLoadErr     = errors.New("Repeat Loading Disk Resource")
+	CloseResourceErr  = errors.New("Close Resource Err")
 )
 
 func CondPanic(condition bool, e error) {

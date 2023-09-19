@@ -412,12 +412,12 @@ func (mf *ManifestFile) reWrite() error {
 
 type TableMeta struct {
 	Id       uint64
-	checkSum []byte
+	CheckSum []byte
 }
 
 func (mf *ManifestFile) AddTableMeta(levelNum int, t *TableMeta) error {
 	return mf.AddChanges([]*pb.ManifestChange{
-		newManifestChange(t.Id, uint32(levelNum), t.checkSum),
+		newManifestChange(t.Id, uint32(levelNum), t.CheckSum),
 	})
 }
 

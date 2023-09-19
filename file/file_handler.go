@@ -24,7 +24,17 @@ type fileInMemory struct {
 	DataSize int
 }
 
-func LoadFileToMemory(fd *os.File, DataSize int) (*fileInMemory, error) {
+func (fim *fileInMemory) IsLoad() bool {
+	return fim.DataSize == 0
+}
+
+func LoadFileToMemory(fd *os.File) (*fileInMemory, error) {
+	/*直接获取文件一共占有多少字节大小*/
+	fileinfo, err := fd.Stat()
+	DataSize := int(fileinfo.Size())
+	if err != nil {
+		return nil, err
+	}
 
 	if DataSize < bufferSize {
 		DataSize = bufferSize
@@ -74,7 +84,7 @@ func NewFileInMemory(fileName string) (*fileInMemory, error) {
 		log.Fatalf("get file stat %s failed", fileName)
 	}
 	if DataSize := fileInfo.Size(); DataSize > 0 { /*文件非空*/
-		return LoadFileToMemory(fd, int(DataSize))
+		return LoadFileToMemory(fd)
 	}
 
 	return &fileInMemory{
@@ -313,4 +323,14 @@ func (fim *fileInMemory) CheckSum() []byte {
 	checkSum := make([]byte, 4)
 	binary.BigEndian.PutUint32(checkSum[0:4], utils.CalculateCheckSumU32(fim.Data))
 	return checkSum
+}
+
+func (fim *fileInMemory) CloseDiskResource() error {
+	if fim.fd != nil {
+		return utils.CloseResourceErr
+	}
+
+	fim.DataSize = 0
+	fim.Data = fim.Data[:0]
+	return nil
 }

@@ -46,7 +46,6 @@ func OpenTableByBuilder(lm *levelManager, tableName string, builder *TableBuilde
 		return nil
 	}
 
-	sstSize := builder.Done().size
 	t, err := builder.Flush(lm, tableName)
 	if err != nil {
 		utils.Err(err)
@@ -108,13 +107,14 @@ func (t *Table) ReName(newName string) {
 
 type TableIterator struct {
 	t     *Table
+	err   error
 	kr    KeyRange /*用于给TableIterator进行排序使用*/
 	idx   int      /*表示当前的迭代器位置*/
 	iters []*BlockIterator
 }
 
 /*请确保Table是已经初始化好了的*/
-func NewTableIterator(t *Table) (*TableIterator, error) {
+func (t *Table) NewTableIterator() (*TableIterator, error) {
 	/*读取它身上的所有块迭代器出来*/
 	t.IncrRef()
 	/*计算有多少个block*/
@@ -216,6 +216,92 @@ func (ti *TableIterator) Seek(key []byte) {
 	/*找到每一个块的最小Key*/
 	idx := sort.Search(ti.t.ss.BlockCount(), func(idx int) bool {
 		/*获取idx代表的block*/
-
+		if idx == len(ti.iters) {
+			return true
+		}
+		return utils.CompareKeys(ti.t.ss.Indexs().GetOffsets()[idx].GetKey(), key) > 0
 	})
+	if idx == 0 {
+		ti.idx = 0
+	} else {
+		ti.idx = idx - 1
+	}
+
+}
+
+/*从当前指向的block中搜索数据出来*/
+func (ti *TableIterator) seekHelper(key []byte) {
+	cbi := ti.iters[ti.idx]
+	cbi.Seek(key)
+	ti.err = cbi.Err()
+}
+
+func (t *Table) Search(key []byte, maxVs *uint64) (entry *utils.Entry, err error) {
+	t.IncrRef()
+	defer t.DecrDef()
+	/*先通过布隆过滤器判断一下该数据是否在在这个表*/
+	if t.ss.HasBloomFilter() {
+		bloomFilter := utils.Filter(t.ss.BloomFilter())
+
+		if !bloomFilter.MayContains(key) {
+			return nil, utils.KeyNotFoundErr
+		}
+	}
+	/*有大概率该Key存在该文件中，我们开始换页读取磁盘*/
+	err = t.LoadDiskResource()
+	defer t.CloseDiskResource()
+
+	/*创建相关的迭代器*/
+	var ti *TableIterator
+	if ti, err = t.NewTableIterator(); err != nil {
+		/*TODO:清除资源的一些操作*/
+		return nil, err
+	}
+	ti.Seek(key)
+	if !ti.Valid() {
+		/*TODO:清除资源的一些操作*/
+		return nil, utils.KeyNotFoundErr
+	}
+
+	entry = ti.Item().Entry()
+	/*判断一下是否是真的相等*/
+	if utils.SameKey(key, entry.Key) {
+		if version := utils.ParseTs(entry.Key); *maxVs < version {
+			*maxVs = version
+			return entry, nil
+		}
+	}
+	return nil, utils.KeyNotFoundErr
+}
+
+/*关闭紫盘资源，只留下我们需要的*/
+func (t *Table) CloseDiskResource() {
+	/*我们只需要关闭映射就好了，内存中的其他资源要保留,特别是文件句柄要留好*/
+	_ = t.ss.CloseDiskResource()
+}
+
+/*加载磁盘资源,并更新内存中的数据*/
+func (t *Table) LoadDiskResource() error {
+	if t.isLoad() {
+		return nil
+	}
+
+	/*映射一下fim中的磁盘资源*/
+	if err := t.ss.LoadDiskToMemory(); err != nil {
+		return err
+	}
+	/*索引资源一般是提前加载好了的不用再加载了*/
+	if t.ss.Indexs() == nil {
+		/*第一次加载，需要拉取索引下来*/
+		err := t.ss.Init()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (t *Table) isLoad() bool {
+	return false
 }

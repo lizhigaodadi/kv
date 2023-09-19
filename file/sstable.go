@@ -54,6 +54,7 @@ func (ss *SSTable) GetBlockOffset(idx int) *pb.BlockOffset {
 	return ss.idxTable.GetOffsets()[idx]
 }
 
+/*初始化数据*/
 func (ss *SSTable) Init() error {
 	var ko *pb.BlockOffset
 	var err error
@@ -74,8 +75,18 @@ func (ss *SSTable) Init() error {
 	keyBytes := ko.GetKey()
 	minKey := make([]byte, len(keyBytes))
 	copy(minKey, keyBytes)
+	/*读取最后一个Block的最后一个，然后释放资源，这就是当前SSTable中最大的Key*/
+	end := len(ss.idxTable.Offsets) - 1
+	block, err := ss.ReadBlock(end)
+	if err != nil {
+		/*TODO:一些释放资源的操作*/
+		return err
+	}
+	/*创建相关的迭代器出来*/
+	bi := block.NewBlockIterator(end)
+	bi.SeekToEnd()
 	ss.minKey = minKey
-	ss.maxKey = minKey
+	ss.maxKey = bi.Item().Entry().Key
 	return nil
 }
 
@@ -227,4 +238,33 @@ func BlockUnMarshal(buffer []byte) *lsm.Block {
 	utils.CondPanic(curChk != chk, utils.UnMarshalParseErr)
 
 	return lsm.NewBlock(0, readPos, int(chkLen), data, nil)
+}
+
+func (ss *SSTable) BloomFilter() []byte {
+	return ss.idxTable.BloomFilter
+}
+
+func (ss *SSTable) IsLoad() bool {
+	/*检查fim的dataSize大小即可*/
+	return ss.fim.IsLoad()
+}
+
+func (ss *SSTable) LoadDiskToMemory() error {
+	/*确保文件句柄不为空*/
+	if ss.fim.IsLoad() {
+		return utils.RepeatLoadErr
+	}
+	/*开始加载*/
+	fd := ss.fim.fd
+	fim, err := LoadFileToMemory(fd)
+	if err != nil {
+		return err
+	}
+	ss.fim = fim /*转换为新的*/
+
+	return nil
+}
+
+func (ss *SSTable) CloseDiskResource() error {
+	return ss.fim.CloseDiskResource()
 }

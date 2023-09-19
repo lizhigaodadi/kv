@@ -229,3 +229,85 @@ func (lh *levelHandler) getRealSize() uint32 {
 func (lm *levelManager) GetNewFid() uint64 {
 	return atomic.AddUint64(&lm.maxFID, 1)
 }
+
+func (lh *levelHandler) Add(t ...*Table) {
+	lh.rwMutex.Lock()
+	defer lh.rwMutex.Unlock()
+	lh.tables = append(lh.tables, t...) /*总是按照顺序添加进去的*/
+}
+
+func (lm *levelManager) Get(key []byte) (*utils.Entry, error) {
+	var (
+		entry *utils.Entry
+		err   error
+	)
+
+	/*开始每个层级的查询*/
+	/*level0*/
+	entry, err = lm.handlers[0].Get(key)
+	if err == nil {
+		return entry, nil
+	}
+	for level := 1; level < lm.opt.MaxLevelNum; level++ {
+		lh := lm.handlers[level]
+		if entry, err = lh.Get(key); err == nil {
+			return entry, nil
+		}
+	}
+
+	return nil, utils.KeyNotFoundErr
+}
+
+func (lh *levelHandler) Get(key []byte) (*utils.Entry, error) {
+	if lh.levelNum == 0 {
+		/*来自l0的特殊查找*/
+		return lh.searchL0SST(key)
+	} else {
+		/*其他层的查找*/
+		return lh.searchLNSST(key)
+	}
+}
+
+func (lh *levelHandler) searchL0SST(key []byte) (*utils.Entry, error) {
+	var version uint64
+	/*需要对所有表都进行一次遍历*/
+	for _, t := range lh.tables {
+		if entry, err := t.Search(key, &version); err != nil {
+			return entry, nil
+		}
+	}
+	return nil, utils.KeyNotFoundErr
+}
+
+func (lh *levelHandler) searchLNSST(key []byte) (*utils.Entry, error) {
+	/*对其他层级的表都进行一次搜索*/
+	table := lh.getTable(key)
+	if table == nil {
+		return nil, utils.KeyNotFoundErr
+	}
+	var version uint64
+	entry, err := table.Search(key, &version)
+	if err != nil {
+		return nil, utils.KeyNotFoundErr
+	}
+
+	return entry, nil
+}
+
+func (lh *levelHandler) getTable(key []byte) *Table {
+	/*先查看该层级的最大和最小的key*/
+	minKey := lh.tables[0].ss.MinKey()
+	maxKey := lh.tables[lh.levelNum-1].ss.MaxKey()
+	if utils.CompareKeys(key, minKey) < 0 || utils.CompareKeys(key, maxKey) > 0 {
+		return nil
+	}
+
+	/*开始细分到每一个表中去寻找*/
+	for _, t := range lh.tables {
+		/*判断一下是否在里面*/
+		if utils.CompareKeys(key, t.ss.MinKey()) >= 0 && utils.CompareKeys(key, t.ss.MaxKey()) <= 0 { /*找到了*/
+			return t
+		}
+	}
+	return nil
+}
