@@ -108,13 +108,14 @@ func (t *Table) ReName(newName string) {
 type TableIterator struct {
 	t     *Table
 	err   error
+	opt   *utils.Options
 	kr    KeyRange /*用于给TableIterator进行排序使用*/
 	idx   int      /*表示当前的迭代器位置*/
 	iters []*BlockIterator
 }
 
 /*请确保Table是已经初始化好了的*/
-func (t *Table) NewTableIterator() (*TableIterator, error) {
+func (t *Table) NewTableIterator(opt *utils.Options) (*TableIterator, error) {
 	/*读取它身上的所有块迭代器出来*/
 	t.IncrRef()
 	/*计算有多少个block*/
@@ -141,6 +142,7 @@ func (t *Table) NewTableIterator() (*TableIterator, error) {
 		kr:    KeyRange{},
 		idx:   0,
 		iters: biters,
+		opt:   opt,
 	}
 
 	return ti, nil

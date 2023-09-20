@@ -3,11 +3,34 @@ package lsm
 import (
 	"github.com/pkg/errors"
 	"kv/utils"
+	"sort"
 )
 
+/*作为终止符存在*/
 type Iterator struct {
 	it    Item
 	iters []utils.Iterator
+}
+
+func (it *Iterator) Next() {
+
+}
+func (it *Iterator) Valid() bool {
+	return false
+}
+
+func (it *Iterator) Item() utils.Item {
+	return nil
+}
+
+func (it *Iterator) Rewind() {
+
+}
+func (it *Iterator) Close() {
+
+}
+func (it *Iterator) Seek(key []byte) {
+
 }
 
 type Item struct {
@@ -35,30 +58,112 @@ type MergeIterator struct {
 
 type CompactIterator struct {
 	/*TODO:这是真正的存储数据的迭代器，支持多种不同迭代器*/
-	iter utils.Iterator
-	ti   *TableIterator /*三者中只有一个不为nil*/
-	li   *LevelIterator
-	bi   *BlockIterator
+	idx     int
+	cur     utils.Iterator
+	iters   []utils.Iterator
+	tables  []*Table
+	options *utils.Options
 }
 
-func NewCompactIterator(iter utils.Iterator) *CompactIterator {
-	ci := &CompactIterator{
-		iter: iter,
+func NewCompactIterator(tbls []*Table, opt *utils.Options) *CompactIterator {
+	len := len(tbls)
+	iters := make([]utils.Iterator, len)
+	return &CompactIterator{
+		idx:     -1,
+		iters:   iters,
+		tables:  tbls,
+		options: opt,
 	}
-	ti, ok := iter.(*TableIterator)
-	if ok {
-		ci.ti = ti
+}
+
+func (ci *CompactIterator) Next() {
+	ci.cur.Next()
+	if ci.cur.Valid() {
+		return /*不需要过多处理*/
 	}
-	li, ok := iter.(*LevelIterator)
-	if ok {
-		ci.li = li
+	for {
+		/*当前迭代器需要更新*/
+		if !ci.options.IsAsc {
+			ci.setId(ci.idx + 1)
+		} else {
+			ci.setId(ci.idx - 1)
+		}
+		if ci.cur == nil { /*更新失败了属于是*/
+			return
+		}
+		ci.cur.Rewind()
+		if ci.cur.Valid() {
+			break
+		}
 	}
-	bi, ok := iter.(*BlockIterator)
-	if ok {
-		ci.bi = bi
+}
+
+func (ci *CompactIterator) Valid() bool {
+	return ci.cur == nil || ci.cur.Valid()
+}
+
+func (ci *CompactIterator) Item() utils.Item {
+	if !ci.Valid() {
+		return nil
 	}
 
-	return ci
+	return ci.cur.Item()
+}
+
+func (ci *CompactIterator) setId(id int) {
+	ci.idx = id
+	if id < 0 || id >= len(ci.tables) {
+		ci.cur = nil
+		return
+	}
+
+	if ci.iters[id] == nil { /*初始化迭代器，请确保相关磁盘资源被加载到了内存中*/
+		ti, _ := ci.tables[id].NewTableIterator(ci.options)
+		ci.iters[id] = ti
+	}
+	ci.cur = ci.iters[id]
+}
+
+func (ci *CompactIterator) Close() {
+	for _, ti := range ci.iters {
+		if ti == nil {
+			continue
+		}
+
+		ti.Close()
+	}
+}
+
+func (ci *CompactIterator) Seek(key []byte) {
+	var idx int
+	if ci.options.IsAsc {
+		idx = sort.Search(len(ci.tables), func(i int) bool { /*从前往后*/
+			return utils.CompareKeys(ci.tables[i].MaxKey(), key) >= 0
+		})
+	} else {
+		n := len(ci.tables) - 1
+		idx = n - sort.Search(len(ci.tables), func(i int) bool {
+			return utils.CompareKeys(ci.tables[n-i].MinKey(), key) <= 0
+		})
+	}
+	if idx < 0 || idx >= len(ci.tables) {
+		ci.setId(-1)
+		return
+	}
+	ci.setId(idx)
+	ci.cur.Seek(key)
+}
+
+func (ci *CompactIterator) Rewind() {
+	if len(ci.iters) == 0 {
+		return
+	}
+	if !ci.options.IsAsc {
+		ci.setId(0)
+	} else {
+		ci.setId(len(ci.iters) - 1)
+	}
+	ci.cur.Rewind()
 }
 
 type node struct {
@@ -188,6 +293,15 @@ func NewMergeIterator() *MergeIterator {
 			valid: true,
 		},
 	}
+}
+
+func NewMergeIterator1(iters []utils.Iterator, reserve bool) utils.Iterator {
+	switch len(iters) {
+	case 0:
+		return &Iterator{}
+
+	}
+	return nil
 }
 
 func (mi *MergeIterator) Valid() bool {

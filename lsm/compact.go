@@ -554,7 +554,11 @@ func buildMergeIterators(tables []*Table) utils.Iterator {
 	if MergeCount > 0 {
 		node.addIterator(NewMergeIterator())
 	} else {
-		node.addIterator(NewTableIterator(tables[0])) /*TDOO:添加一个实际迭代数据的迭代器*/
+		iterator, err := tables[0].NewTableIterator()
+		if err != nil {
+			return nil
+		}
+		node.addIterator(iterator) /*TDOO:添加一个实际迭代数据的迭代器*/
 	}
 	/*通过迭代的方式二叉树*/
 	var j int
@@ -919,4 +923,78 @@ func (lm *levelManager) normalMatchAppropriateNext(cd *CompactDef) bool {
 	}
 
 	return true
+}
+
+func (lm *levelManager) runCompactDef(id, l int, cd CompactDef) error {
+	if len(cd.t.fileSz) == 0 {
+		return errors.New("FileSize cannot be zero. Targets are not set")
+	}
+	timeStart := time.Now()
+	thisLevel := cd.thisLevel
+	nextLevel := cd.nextLevel
+
+	utils.CondPanic(len(cd.split) != 0, errors.New("len(cd.split) != 0"))
+	if thisLevel == nextLevel {
+		/*l0 to l0 和 lmax to lmax*/
+	} else {
+		lm.addSplits(&cd)
+	}
+
+	/*追加一个空的*/
+	if len(cd.split) == 0 {
+		cd.split = append(cd.split, KeyRange{})
+	}
+
+	return nil
+}
+
+func (lm *levelManager) compactBuildTables(lev int, cd CompactDef) ([]*Table, func() error, error) {
+	thisTables := cd.bot
+	nextTables := cd.top
+	iterOpt := &utils.Options{
+		IsAsc: true,
+	}
+
+	newIterator := func() []utils.Iterator {
+		var iters []utils.Iterator
+		switch {
+		case lev == 0:
+			iters = append(iters, iteratorReversed(thisTables, iterOpt)...)
+		case len(thisTables) > 0:
+			iter, _ := thisTables[0].NewTableIterator(iterOpt)
+			iters = []utils.Iterator{iter}
+		}
+
+		return append(iters, NewCompactIterator(nextTables, iterOpt))
+	}
+
+	/*声明三个管道接收数据*/
+	res := make(chan *Table, 3)
+	inflightBuilders := utils.NewThrottle(8 + len(cd.split))
+
+	for _, kr := range cd.split {
+		if err := inflightBuilders.Do(); err != nil {
+			return nil, nil, fmt.Errorf("cannot start subcompaction: %v", err)
+		}
+
+		/*开启子压缩*/
+		go func(kr KeyRange) {
+			defer inflightBuilders.Done(nil)
+
+		}(kr)
+	}
+
+	return nil, nil, nil
+}
+
+func iteratorReversed(th []*Table, opt *utils.Options) []utils.Iterator {
+	out := make([]utils.Iterator, 0, len(th))
+	for i := len(th) - 1; i >= 0; i-- {
+		iter, err := th[i].NewTableIterator(opt)
+		if err != nil {
+			return nil
+		}
+		out = append(out, iter)
+	}
+	return out
 }

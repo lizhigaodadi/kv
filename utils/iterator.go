@@ -16,5 +16,5 @@ type Item interface {
 
 type Options struct {
 	prefix []byte
-	isAsc  bool
+	IsAsc  bool
 }

@@ -124,3 +124,11 @@ func (lm *levelManager) flush(t *memTable) error {
 
 	return nil
 }
+
+func (lsm *LSM) MemTableIsNil() bool {
+	return lsm.mem == nil
+}
+
+func (lsm *LSM) GetSkipListFromMemTable() *utils.SkipList {
+	return lsm.mem.sl
+}
